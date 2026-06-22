@@ -245,6 +245,17 @@ export function buildLeaderboardText(learners: TelegramLearnerState[]) {
   ].join('\n')
 }
 
+export function toTelegramLearnerUpsert(learner: TelegramLearnerState) {
+  return {
+    telegram_user_id: learner.telegramUserId,
+    display_name: learner.displayName,
+    learned_vocabulary_count: learner.learnedVocabularyCount,
+    wrong_vocabulary_count: learner.wrongVocabularyCount,
+    check_in_days: learner.checkInDays,
+    last_check_in_date: learner.lastCheckInDate ?? null,
+  }
+}
+
 export function callbackKeyboard(options: string[], prefix: string) {
   return options.map((option, index) => [{ text: `${String.fromCharCode(65 + index)}. ${option}`, callback_data: `${prefix}:${encodeURIComponent(option)}` }])
 }

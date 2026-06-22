@@ -12,6 +12,7 @@ import {
   createTelegramLearnerState,
   recordVocabularyAnswer,
   getNextVocabularyQuestion,
+  toTelegramLearnerUpsert,
 } from './spanish-coach-bot'
 
 describe('AI Spanish Coach bot flows', () => {
@@ -116,5 +117,24 @@ describe('AI Spanish Coach bot flows', () => {
     expect(text).toContain('学会 20')
     expect(text).toContain('错题 1')
     expect(text).toContain('打卡 5 天')
+  })
+
+  it('builds Supabase upsert payload for persistent Telegram learner stats', () => {
+    const learner = {
+      ...createTelegramLearnerState('42', '@zita'),
+      learnedVocabularyCount: 8,
+      wrongVocabularyCount: 2,
+      checkInDays: 3,
+      lastCheckInDate: '2026-06-22',
+    }
+
+    expect(toTelegramLearnerUpsert(learner)).toEqual({
+      telegram_user_id: '42',
+      display_name: '@zita',
+      learned_vocabulary_count: 8,
+      wrong_vocabulary_count: 2,
+      check_in_days: 3,
+      last_check_in_date: '2026-06-22',
+    })
   })
 })

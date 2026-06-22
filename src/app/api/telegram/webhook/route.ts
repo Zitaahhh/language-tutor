@@ -13,6 +13,7 @@ import {
   getNextVocabularyQuestion,
   recordCheckIn,
   recordVocabularyAnswer,
+  toTelegramLearnerUpsert,
   type TelegramLearnerState,
   type VocabMode,
   type VocabularyQuestion,
@@ -51,6 +52,7 @@ function getLearner(from?: { id?: number; username?: string; first_name?: string
   }
   state.displayName = displayName
   recordCheckIn(state)
+  void persistLearner(state)
   return state
 }
 
@@ -71,6 +73,50 @@ async function callTelegram(method: string, body: Record<string, unknown>) {
 
 function toInlineKeyboard(buttons: { text: string; callback_data: string }[][]) {
   return { inline_keyboard: buttons }
+}
+
+function createServiceSupabase() {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY
+  if (!url || !key) return null
+  return { url, key }
+}
+
+async function persistLearner(learner: TelegramLearnerState) {
+  const cfg = createServiceSupabase()
+  if (!cfg) return
+  await fetch(`${cfg.url}/rest/v1/telegram_learners`, {
+    method: 'POST',
+    headers: {
+      apikey: cfg.key,
+      Authorization: `Bearer ${cfg.key}`,
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=merge-duplicates',
+    },
+    body: JSON.stringify(toTelegramLearnerUpsert(learner)),
+  }).catch(() => null)
+}
+
+async function loadLeaderboardFromSupabase() {
+  const cfg = createServiceSupabase()
+  if (!cfg) return [...learnerStates.values()]
+  const response = await fetch(`${cfg.url}/rest/v1/telegram_learners?select=telegram_user_id,display_name,learned_vocabulary_count,wrong_vocabulary_count,check_in_days,last_check_in_date&order=learned_vocabulary_count.desc,wrong_vocabulary_count.asc,check_in_days.desc&limit=20`, {
+    headers: {
+      apikey: cfg.key,
+      Authorization: `Bearer ${cfg.key}`,
+    },
+  }).catch(() => null)
+  if (!response?.ok) return [...learnerStates.values()]
+  const rows = (await response.json().catch(() => [])) as Array<Record<string, unknown>>
+  return rows.map((row) => ({
+    telegramUserId: String(row.telegram_user_id ?? ''),
+    displayName: String(row.display_name ?? row.telegram_user_id ?? ''),
+    learnedVocabularyCount: Number(row.learned_vocabulary_count ?? 0),
+    wrongVocabularyCount: Number(row.wrong_vocabulary_count ?? 0),
+    checkInDays: Number(row.check_in_days ?? 0),
+    currentQuestionIndex: 0,
+    lastCheckInDate: row.last_check_in_date ? String(row.last_check_in_date) : undefined,
+  }))
 }
 
 async function sendMenu(chatId: number | string, menu: { text: string; buttons: { text: string; callback_data: string }[][] }) {
@@ -178,7 +224,7 @@ async function handleCallback(callback: TelegramCallbackQuery) {
   }
 
   if (data === 'menu:leaderboard') {
-    return callTelegram('sendMessage', { chat_id: chatId, text: buildLeaderboardText([...learnerStates.values()]) })
+    return callTelegram('sendMessage', { chat_id: chatId, text: buildLeaderboardText(await loadLeaderboardFromSupabase()) })
   }
 
   if (data.startsWith('vocab:')) {
@@ -204,6 +250,7 @@ async function handleCallback(callback: TelegramCallbackQuery) {
     const question = questionCache.get(key)
     if (!question) return callTelegram('sendMessage', { chat_id: chatId, text: '题目已过期，请重新开始词汇测试。' })
     const result = recordVocabularyAnswer(learner, question, decodeURIComponent(encodedAnswer ?? ''))
+    void persistLearner(learner)
     const words = learnerWordSets.get(learner.telegramUserId) ?? generateVocabularySet('new', 'A1')
 
     if (!result.nextQuestion) {
