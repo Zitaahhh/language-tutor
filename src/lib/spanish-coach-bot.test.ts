@@ -13,6 +13,16 @@ import {
   recordVocabularyAnswer,
   getNextVocabularyQuestion,
   toTelegramLearnerUpsert,
+  createQuizSession,
+  recordQuizAnswer,
+  buildQuizSummary,
+  getNextQuizQuestion,
+  buildQuizQuestionMessage,
+  buildQuizAnswerKeyboard,
+  generateGrammarQuestionSet,
+  generateTranslationQuestionSet,
+  generateReadingQuestionSet,
+  generateVocabularyQuestionSet,
 } from './spanish-coach-bot'
 
 describe('AI Spanish Coach bot flows', () => {
@@ -136,5 +146,49 @@ describe('AI Spanish Coach bot flows', () => {
       check_in_days: 3,
       last_check_in_date: '2026-06-22',
     })
+  })
+
+  it('runs any quiz type for exactly 20 answers then returns a result summary', () => {
+    const session = createQuizSession('telegram-1', 'grammar', Array.from({ length: 20 }, (_, index) => generateGrammarQuestion(index % 2 ? 'A2' : 'A1')))
+
+    for (let index = 0; index < 20; index += 1) {
+      const question = getNextQuizQuestion(session)!
+      const answer = index % 2 === 0 ? question.correctAnswer : question.options.find((option) => option !== question.correctAnswer)!
+      const result = recordQuizAnswer(session, answer)
+      expect(result.shouldContinue).toBe(index < 19)
+    }
+
+    expect(getNextQuizQuestion(session)).toBeNull()
+    expect(session.answers).toHaveLength(20)
+    expect(session.correctCount).toBe(10)
+    expect(buildQuizSummary(session)).toContain('正确率：50%')
+  })
+
+  it('builds 20-question vocabulary and grammar quiz sets with question numbering', () => {
+    const vocabQuestions = generateVocabularyQuestionSet('new', 'A1')
+    const grammarQuestions = generateGrammarQuestionSet('A1')
+    const session = createQuizSession('telegram-2', 'vocabulary', vocabQuestions)
+
+    expect(vocabQuestions).toHaveLength(20)
+    expect(grammarQuestions).toHaveLength(20)
+    expect(vocabQuestions[0].prompt).not.toMatch(/^1\/20/)
+    expect(buildQuizQuestionMessage(session, vocabQuestions[0])).toContain('第 1/20 题')
+    expect(buildQuizQuestionMessage(session, vocabQuestions[0])).toContain('词汇测试')
+  })
+
+  it('uses compact answer-index callback data for Telegram quiz buttons', () => {
+    const session = createQuizSession('123456789', 'vocabulary', generateVocabularyQuestionSet('new', 'A1'))
+    const keyboard = buildQuizAnswerKeyboard(session, session.questions[0])
+
+    expect(keyboard).toHaveLength(4)
+    expect(keyboard[0][0].callback_data).toMatch(/^quiz-answer:123456789-vocabulary-\d+:0$/)
+    expect(Math.max(...keyboard.flat().map((button) => button.callback_data.length))).toBeLessThanOrEqual(64)
+  })
+
+  it('builds translation and reading as 20-answerable quiz sets too', () => {
+    expect(generateTranslationQuestionSet('zh-es')).toHaveLength(20)
+    expect(generateTranslationQuestionSet('es-zh')[0].options).toHaveLength(4)
+    expect(generateReadingQuestionSet('A1')).toHaveLength(20)
+    expect(generateReadingQuestionSet('A1')[0].correctAnswer).toContain('viaje')
   })
 })

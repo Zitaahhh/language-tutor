@@ -1,19 +1,28 @@
 import { NextResponse } from 'next/server'
 import {
   buildBotMainMenu,
-  buildReadingPrompt,
   buildTranslationMenu,
   buildVocabularyModeMenu,
   buildLeaderboardText,
+  buildQuizQuestionMessage,
+  buildQuizAnswerKeyboard,
+  buildQuizSummary,
   callbackKeyboard,
+  createQuizSession,
   createTelegramLearnerState,
-  evaluateTranslation,
   generateGrammarQuestion,
+  generateGrammarQuestionSet,
+  generateReadingQuestionSet,
+  generateTranslationQuestionSet,
+  generateVocabularyQuestionSet,
   generateVocabularySet,
   getNextVocabularyQuestion,
+  getNextQuizQuestion,
   recordCheckIn,
+  recordQuizAnswer,
   recordVocabularyAnswer,
   toTelegramLearnerUpsert,
+  type QuizSession,
   type TelegramLearnerState,
   type VocabMode,
   type VocabularyQuestion,
@@ -41,6 +50,7 @@ type TelegramUpdate = {
 const questionCache = new Map<string, VocabularyQuestion>()
 const learnerStates = new Map<string, TelegramLearnerState>()
 const learnerWordSets = new Map<string, ReturnType<typeof generateVocabularySet>>()
+const quizSessions = new Map<string, QuizSession>()
 
 function getLearner(from?: { id?: number; username?: string; first_name?: string }) {
   const telegramUserId = String(from?.id ?? 'anonymous')
@@ -127,6 +137,32 @@ async function sendMenu(chatId: number | string, menu: { text: string; buttons: 
   })
 }
 
+async function sendQuizQuestion(chatId: number | string, session: QuizSession) {
+  const question = getNextQuizQuestion(session)
+  if (!question) return null
+  return callTelegram('sendMessage', {
+    chat_id: chatId,
+    text: buildQuizQuestionMessage(session, question),
+    reply_markup: toInlineKeyboard(buildQuizAnswerKeyboard(session, question)),
+  })
+}
+
+async function editQuizQuestion(chatId: number | string, messageId: number | undefined, session: QuizSession) {
+  const question = getNextQuizQuestion(session)
+  if (!question || !messageId) return null
+  return callTelegram('editMessageText', {
+    chat_id: chatId,
+    message_id: messageId,
+    text: buildQuizQuestionMessage(session, question),
+    reply_markup: toInlineKeyboard(buildQuizAnswerKeyboard(session, question)),
+  })
+}
+
+async function startQuiz(chatId: number | string, session: QuizSession) {
+  quizSessions.set(session.id, session)
+  return sendQuizQuestion(chatId, session)
+}
+
 async function answerCallback(callbackId: string) {
   return callTelegram('answerCallbackQuery', { callback_query_id: callbackId })
 }
@@ -143,7 +179,7 @@ async function handleTextMessage(message: TelegramMessage) {
   const chatId = message.chat?.id
   if (!chatId) return
   const text = message.text ?? ''
-  getLearner(message.from)
+  const learner = getLearner(message.from)
 
   if (isGroupMessage(message) && !mentionsBot(text) && !text.startsWith('/')) {
     return
@@ -160,12 +196,8 @@ async function handleTextMessage(message: TelegramMessage) {
   }
 
   if (text.startsWith('/grammar')) {
-    const q = generateGrammarQuestion('A1')
-    await callTelegram('sendMessage', {
-      chat_id: chatId,
-      text: `${q.prompt}\n\n${q.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option}`).join('\n')}`,
-      reply_markup: toInlineKeyboard(callbackKeyboard(q.options, `grammar:${q.correctAnswer}`)),
-    })
+    const session = createQuizSession(learner.telegramUserId, 'grammar', generateGrammarQuestionSet('A1'), '语法测试')
+    await startQuiz(chatId, session)
     return
   }
 
@@ -175,11 +207,8 @@ async function handleTextMessage(message: TelegramMessage) {
   }
 
   if (text.startsWith('/speak')) {
-    const prompt = buildReadingPrompt('A1')
-    await callTelegram('sendMessage', {
-      chat_id: chatId,
-      text: `句子朗读：\n\n${prompt.sentenceEs}\n${prompt.sentenceZh}\n\n${prompt.instructions}`,
-    })
+    const session = createQuizSession(learner.telegramUserId, 'reading', generateReadingQuestionSet('A1'), '句子朗读')
+    await startQuiz(chatId, session)
     return
   }
 
@@ -199,20 +228,13 @@ async function handleCallback(callback: TelegramCallbackQuery) {
   if (data === 'menu:translate') return sendMenu(chatId, buildTranslationMenu())
 
   if (data === 'menu:grammar') {
-    const q = generateGrammarQuestion('A1')
-    return callTelegram('sendMessage', {
-      chat_id: chatId,
-      text: `${q.prompt}\n\n${q.options.map((option, index) => `${String.fromCharCode(65 + index)}. ${option}`).join('\n')}`,
-      reply_markup: toInlineKeyboard(callbackKeyboard(q.options, `grammar:${q.correctAnswer}`)),
-    })
+    const session = createQuizSession(learner.telegramUserId, 'grammar', generateGrammarQuestionSet('A1'), '语法测试')
+    return startQuiz(chatId, session)
   }
 
   if (data === 'menu:reading') {
-    const prompt = buildReadingPrompt('A1')
-    return callTelegram('sendMessage', {
-      chat_id: chatId,
-      text: `句子朗读：\n\n${prompt.sentenceEs}\n${prompt.sentenceZh}\n\n${prompt.instructions}`,
-    })
+    const session = createQuizSession(learner.telegramUserId, 'reading', generateReadingQuestionSet('A1'), '句子朗读')
+    return startQuiz(chatId, session)
   }
 
   if (data === 'menu:progress') {
@@ -229,17 +251,42 @@ async function handleCallback(callback: TelegramCallbackQuery) {
 
   if (data.startsWith('vocab:')) {
     const mode = data.split(':')[1] as VocabMode
-    const words = generateVocabularySet(mode, 'A1')
     learner.currentQuestionIndex = 0
-    learnerWordSets.set(learner.telegramUserId, words)
-    const question = getNextVocabularyQuestion(learner, words)
-    const key = `${learner.telegramUserId}-vocab-${learner.currentQuestionIndex}`
-    questionCache.set(key, question)
-    return callTelegram('sendMessage', {
-      chat_id: chatId,
-      text: `${mode === 'new' ? '学习20个新词汇' : mode === 'old' ? '复习20个旧词汇' : '错题复习'}\n\n${question.prompt}`,
-      reply_markup: toInlineKeyboard(callbackKeyboard(question.options, `vocab-answer:${key}`)),
-    })
+    const title = mode === 'new' ? '学习20个新词汇' : mode === 'old' ? '复习20个旧词汇' : '错题复习'
+    const session = createQuizSession(learner.telegramUserId, 'vocabulary', generateVocabularyQuestionSet(mode, 'A1'), title)
+    return startQuiz(chatId, session)
+  }
+
+  if (data.startsWith('quiz-answer:')) {
+    const payload = data.slice('quiz-answer:'.length)
+    const separatorIndex = payload.lastIndexOf(':')
+    const sessionId = payload.slice(0, separatorIndex)
+    const selectedIndex = Number(payload.slice(separatorIndex + 1))
+    const session = quizSessions.get(sessionId)
+    if (!session) return callTelegram('sendMessage', { chat_id: chatId, text: '题目已过期，请重新开始测试。' })
+    const question = getNextQuizQuestion(session)
+    if (!question || !Number.isInteger(selectedIndex) || !question.options[selectedIndex]) {
+      return callTelegram('sendMessage', { chat_id: chatId, text: '答案无效，请重新开始测试。' })
+    }
+
+    const result = recordQuizAnswer(session, question.options[selectedIndex])
+    if (session.quizType === 'vocabulary') {
+      if (result.correct) learner.learnedVocabularyCount += 1
+      else learner.wrongVocabularyCount += 1
+      learner.currentQuestionIndex = session.currentIndex
+      void persistLearner(learner)
+    }
+
+    if (result.completed) {
+      quizSessions.delete(sessionId)
+      return callTelegram('editMessageText', {
+        chat_id: chatId,
+        message_id: callback.message?.message_id,
+        text: buildQuizSummary(session),
+      })
+    }
+
+    return editQuizQuestion(chatId, callback.message?.message_id, session)
   }
 
   if (data.startsWith('vocab-answer:')) {
@@ -282,11 +329,14 @@ async function handleCallback(callback: TelegramCallbackQuery) {
   }
 
   if (data.startsWith('translate:')) {
-    const result = evaluateTranslation('我想要一杯咖啡，不加糖。', 'Quiero un café, no azúcar.')
-    return callTelegram('sendMessage', {
-      chat_id: chatId,
-      text: `翻译练习：\n请翻译：我想要一杯咖啡，不加糖。\n\n示例纠正：${result.corrected}\n${result.feedback}`,
-    })
+    const direction = data.split(':')[1] === 'es-zh' ? 'es-zh' : 'zh-es'
+    const session = createQuizSession(
+      learner.telegramUserId,
+      'translation',
+      generateTranslationQuestionSet(direction),
+      direction === 'zh-es' ? '中文 → 西语' : '西语 → 中文',
+    )
+    return startQuiz(chatId, session)
   }
 }
 

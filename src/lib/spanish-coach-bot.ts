@@ -256,6 +256,153 @@ export function toTelegramLearnerUpsert(learner: TelegramLearnerState) {
   }
 }
 
+export type QuizQuestion = {
+  prompt: string
+  options: string[]
+  correctAnswer: string
+  explanation?: string
+}
+
+export type QuizSession = {
+  id: string
+  telegramUserId: string
+  quizType: 'vocabulary' | 'grammar' | 'translation' | 'reading'
+  title?: string
+  questions: QuizQuestion[]
+  currentIndex: number
+  correctCount: number
+  answers: Array<{
+    prompt: string
+    selectedAnswer: string
+    correctAnswer: string
+    correct: boolean
+    explanation?: string
+  }>
+}
+
+export function createQuizSession(
+  telegramUserId: string,
+  quizType: QuizSession['quizType'],
+  questions: QuizQuestion[],
+  title?: string,
+): QuizSession {
+  return {
+    id: `${telegramUserId}-${quizType}-${Date.now()}`,
+    telegramUserId,
+    quizType,
+    title,
+    questions: questions.slice(0, 20),
+    currentIndex: 0,
+    correctCount: 0,
+    answers: [],
+  }
+}
+
+export function getNextQuizQuestion(session: QuizSession) {
+  return session.currentIndex >= session.questions.length ? null : session.questions[session.currentIndex]
+}
+
+export function recordQuizAnswer(session: QuizSession, selectedAnswer: string) {
+  const question = getNextQuizQuestion(session)
+  if (!question) return { correct: false, shouldContinue: false, completed: true }
+  const correct = selectedAnswer === question.correctAnswer
+  if (correct) session.correctCount += 1
+  session.answers.push({
+    prompt: question.prompt,
+    selectedAnswer,
+    correctAnswer: question.correctAnswer,
+    correct,
+    explanation: question.explanation,
+  })
+  session.currentIndex += 1
+  return { correct, shouldContinue: session.currentIndex < session.questions.length, completed: session.currentIndex >= session.questions.length }
+}
+
+export function buildQuizSummary(session: QuizSession) {
+  const total = session.answers.length
+  const accuracy = total ? Math.round((session.correctCount / total) * 100) : 0
+  const rows = session.answers.map((answer, index) =>
+    `${index + 1}. ${answer.correct ? '✅' : '❌'} ${answer.prompt.replace(/\n/g, ' ')}\n你的答案：${answer.selectedAnswer}\n正确答案：${answer.correctAnswer}${answer.explanation ? `\n解析：${answer.explanation}` : ''}`,
+  )
+  return [`🎉 ${session.title ?? '本轮'}${total}题完成`, `正确：${session.correctCount}/${total}`, `正确率：${accuracy}%`, '', '答题结果：', ...rows].join('\n')
+}
+
+export function generateVocabularyQuestionSet(mode: VocabMode, level = 'A1'): QuizQuestion[] {
+  const words = generateVocabularySet(mode, level)
+  return words.map((_, index) => {
+    const question = buildVocabularyQuestion(words, index)
+    return {
+      prompt: `${question.word.spanish} 是什么意思？`,
+      options: question.options,
+      correctAnswer: question.correctAnswer,
+      explanation: `${question.word.spanish} = ${question.word.meaningZh}\n${question.word.exampleEs}\n${question.word.exampleZh}`,
+    }
+  })
+}
+
+export function generateGrammarQuestionSet(level = 'A1'): QuizQuestion[] {
+  return Array.from({ length: 20 }, (_, index) => {
+    const question = generateGrammarQuestion(index % 2 === 0 ? level : level === 'A1' ? 'A2' : level)
+    return {
+      prompt: question.prompt,
+      options: question.options,
+      correctAnswer: question.correctAnswer,
+      explanation: question.explanation,
+    }
+  })
+}
+
+export function generateTranslationQuestionSet(direction: 'zh-es' | 'es-zh' = 'zh-es'): QuizQuestion[] {
+  return generateVocabularySet('new', 'A1').map((word, index) => {
+    const options = [word.exampleEs, ...a1Vocabulary.filter((item) => item.exampleEs !== word.exampleEs).slice(index + 1, index + 4).map((item) => item.exampleEs)]
+    const fallbackOptions = [word.exampleZh, ...a1Vocabulary.filter((item) => item.exampleZh !== word.exampleZh).slice(index + 1, index + 4).map((item) => item.exampleZh)]
+    return direction === 'zh-es'
+      ? {
+          prompt: `请选择正确的西语翻译：\n\n${word.exampleZh}`,
+          options,
+          correctAnswer: word.exampleEs,
+          explanation: `${word.exampleZh}\n${word.exampleEs}`,
+        }
+      : {
+          prompt: `请选择正确的中文意思：\n\n${word.exampleEs}`,
+          options: fallbackOptions,
+          correctAnswer: word.exampleZh,
+          explanation: `${word.exampleEs}\n${word.exampleZh}`,
+        }
+  })
+}
+
+export function generateReadingQuestionSet(level = 'A1'): QuizQuestion[] {
+  return generateVocabularySet('new', level).map((word, index) => {
+    const options = [word.exampleEs, ...a1Vocabulary.filter((item) => item.exampleEs !== word.exampleEs).slice(index + 1, index + 4).map((item) => item.exampleEs)]
+    return {
+      prompt: `句子朗读：请选择本题要朗读的句子。\n\n${word.exampleZh}`,
+      options,
+      correctAnswer: word.exampleEs,
+      explanation: `请朗读：${word.exampleEs}\n意思：${word.exampleZh}`,
+    }
+  })
+}
+
+export function getQuizTypeTitle(quizType: QuizSession['quizType']) {
+  return quizType === 'vocabulary' ? '词汇测试' : quizType === 'grammar' ? '语法测试' : quizType === 'translation' ? '句子翻译' : '句子朗读'
+}
+
+export function buildQuizQuestionMessage(session: QuizSession, question: QuizQuestion) {
+  return [
+    session.title ?? getQuizTypeTitle(session.quizType),
+    `第 ${session.currentIndex + 1}/${session.questions.length} 题`,
+    '',
+    question.prompt,
+  ].join('\n')
+}
+
+export function buildQuizAnswerKeyboard(session: QuizSession, question: QuizQuestion) {
+  return question.options.map((option, index) => [
+    { text: `${String.fromCharCode(65 + index)}. ${option}`, callback_data: `quiz-answer:${session.id}:${index}` },
+  ])
+}
+
 export function callbackKeyboard(options: string[], prefix: string) {
   return options.map((option, index) => [{ text: `${String.fromCharCode(65 + index)}. ${option}`, callback_data: `${prefix}:${encodeURIComponent(option)}` }])
 }
