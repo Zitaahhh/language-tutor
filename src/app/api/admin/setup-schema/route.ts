@@ -1,0 +1,32 @@
+import { createClient } from '@supabase/supabase-js'
+import { NextResponse } from 'next/server'
+import { getSchemaSql } from '@/lib/schema'
+
+export async function POST(request: Request) {
+  const secret = request.headers.get('x-admin-secret')
+  if (process.env.ADMIN_SETUP_SECRET && secret !== process.env.ADMIN_SETUP_SECRET) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (!url || !serviceKey) {
+    return NextResponse.json({ error: 'Missing Supabase environment variables' }, { status: 500 })
+  }
+
+  const supabase = createClient(url, serviceKey, { auth: { persistSession: false } })
+  const { error } = await supabase.rpc('exec_sql', { sql: getSchemaSql() })
+
+  if (error) {
+    return NextResponse.json(
+      {
+        error: 'Automatic schema creation requires a Supabase SQL helper named exec_sql. Run supabase/schema.sql once in the SQL editor, or create the helper documented in README.md.',
+        detail: error.message,
+      },
+      { status: 500 },
+    )
+  }
+
+  return NextResponse.json({ ok: true })
+}
