@@ -4,12 +4,16 @@ import {
   buildReadingPrompt,
   buildTranslationMenu,
   buildVocabularyModeMenu,
-  buildVocabularyQuestion,
+  buildLeaderboardText,
   callbackKeyboard,
+  createTelegramLearnerState,
   evaluateTranslation,
-  evaluateVocabularyAnswer,
   generateGrammarQuestion,
   generateVocabularySet,
+  getNextVocabularyQuestion,
+  recordCheckIn,
+  recordVocabularyAnswer,
+  type TelegramLearnerState,
   type VocabMode,
   type VocabularyQuestion,
 } from '@/lib/spanish-coach-bot'
@@ -34,6 +38,21 @@ type TelegramUpdate = {
 }
 
 const questionCache = new Map<string, VocabularyQuestion>()
+const learnerStates = new Map<string, TelegramLearnerState>()
+const learnerWordSets = new Map<string, ReturnType<typeof generateVocabularySet>>()
+
+function getLearner(from?: { id?: number; username?: string; first_name?: string }) {
+  const telegramUserId = String(from?.id ?? 'anonymous')
+  const displayName = from?.username ? `@${from.username}` : from?.first_name || telegramUserId
+  let state = learnerStates.get(telegramUserId)
+  if (!state) {
+    state = createTelegramLearnerState(telegramUserId, displayName)
+    learnerStates.set(telegramUserId, state)
+  }
+  state.displayName = displayName
+  recordCheckIn(state)
+  return state
+}
 
 function telegramApiUrl(method: string) {
   const token = process.env.TELEGRAM_BOT_TOKEN
@@ -78,6 +97,7 @@ async function handleTextMessage(message: TelegramMessage) {
   const chatId = message.chat?.id
   if (!chatId) return
   const text = message.text ?? ''
+  getLearner(message.from)
 
   if (isGroupMessage(message) && !mentionsBot(text) && !text.startsWith('/')) {
     return
@@ -126,6 +146,7 @@ async function handleCallback(callback: TelegramCallbackQuery) {
   await answerCallback(callback.id)
 
   const data = callback.data
+  const learner = getLearner(callback.from)
 
   if (data === 'menu:main') return sendMenu(chatId, buildBotMainMenu())
   if (data === 'menu:vocab') return sendMenu(chatId, buildVocabularyModeMenu())
@@ -153,14 +174,20 @@ async function handleCallback(callback: TelegramCallbackQuery) {
   }
 
   if (data === 'menu:mistakes') {
-    return callTelegram('sendMessage', { chat_id: chatId, text: '错题本：当前请先完成词汇/语法/翻译练习，错题会自动进入这里。' })
+    return callTelegram('sendMessage', { chat_id: chatId, text: `错题本：${learner.displayName}\n当前词汇错题：${learner.wrongVocabularyCount}\n继续点击“词汇测试 → 错题复习”复习。` })
+  }
+
+  if (data === 'menu:leaderboard') {
+    return callTelegram('sendMessage', { chat_id: chatId, text: buildLeaderboardText([...learnerStates.values()]) })
   }
 
   if (data.startsWith('vocab:')) {
     const mode = data.split(':')[1] as VocabMode
     const words = generateVocabularySet(mode, 'A1')
-    const question = buildVocabularyQuestion(words, 0)
-    const key = `${chatId}-vocab-0`
+    learner.currentQuestionIndex = 0
+    learnerWordSets.set(learner.telegramUserId, words)
+    const question = getNextVocabularyQuestion(learner, words)
+    const key = `${learner.telegramUserId}-vocab-${learner.currentQuestionIndex}`
     questionCache.set(key, question)
     return callTelegram('sendMessage', {
       chat_id: chatId,
@@ -176,8 +203,24 @@ async function handleCallback(callback: TelegramCallbackQuery) {
     const encodedAnswer = payload.slice(separatorIndex + 1)
     const question = questionCache.get(key)
     if (!question) return callTelegram('sendMessage', { chat_id: chatId, text: '题目已过期，请重新开始词汇测试。' })
-    const result = evaluateVocabularyAnswer(question, decodeURIComponent(encodedAnswer ?? ''))
-    return callTelegram('sendMessage', { chat_id: chatId, text: result.message })
+    const result = recordVocabularyAnswer(learner, question, decodeURIComponent(encodedAnswer ?? ''))
+    const words = learnerWordSets.get(learner.telegramUserId) ?? generateVocabularySet('new', 'A1')
+
+    if (!result.nextQuestion) {
+      return callTelegram('sendMessage', {
+        chat_id: chatId,
+        text: `${result.message}\n\n🎉 本轮20题完成！\n学会：${learner.learnedVocabularyCount}\n错题：${learner.wrongVocabularyCount}`,
+      })
+    }
+
+    const nextQuestion = getNextVocabularyQuestion(learner, words)
+    const nextKey = `${learner.telegramUserId}-vocab-${learner.currentQuestionIndex}`
+    questionCache.set(nextKey, nextQuestion)
+    return callTelegram('sendMessage', {
+      chat_id: chatId,
+      text: `${result.message}\n\n下一题：\n${nextQuestion.prompt}`,
+      reply_markup: toInlineKeyboard(callbackKeyboard(nextQuestion.options, `vocab-answer:${nextKey}`)),
+    })
   }
 
   if (data.startsWith('grammar:')) {

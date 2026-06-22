@@ -38,6 +38,16 @@ export type ReadingPrompt = {
   instructions: string
 }
 
+export type TelegramLearnerState = {
+  telegramUserId: string
+  displayName: string
+  learnedVocabularyCount: number
+  wrongVocabularyCount: number
+  checkInDays: number
+  currentQuestionIndex: number
+  lastCheckInDate?: string
+}
+
 const a1Vocabulary: VocabularyItem[] = [
   ['viaje', '旅行', 'Mi viaje a España fue increíble.', '我的西班牙旅行非常棒。'],
   ['calle', '街道', 'La calle es muy bonita.', '这条街很漂亮。'],
@@ -81,6 +91,7 @@ export function buildBotMainMenu(): CoachMenu {
         { text: '学习进度', callback_data: 'menu:progress' },
         { text: '错题本', callback_data: 'menu:mistakes' },
       ],
+      [{ text: '排行榜', callback_data: 'menu:leaderboard' }],
     ],
   }
 }
@@ -183,6 +194,55 @@ export function buildTranslationMenu(): CoachMenu {
       [{ text: '返回主菜单', callback_data: 'menu:main' }],
     ],
   }
+}
+
+export function createTelegramLearnerState(telegramUserId: string, displayName: string): TelegramLearnerState {
+  return {
+    telegramUserId,
+    displayName,
+    learnedVocabularyCount: 0,
+    wrongVocabularyCount: 0,
+    checkInDays: 0,
+    currentQuestionIndex: 0,
+  }
+}
+
+export function getNextVocabularyQuestion(state: TelegramLearnerState, words: VocabularyItem[]): VocabularyQuestion {
+  return buildVocabularyQuestion(words, state.currentQuestionIndex % words.length)
+}
+
+export function recordVocabularyAnswer(state: TelegramLearnerState, question: VocabularyQuestion, answer: string) {
+  const result = evaluateVocabularyAnswer(question, answer)
+  if (result.correct) state.learnedVocabularyCount += 1
+  else state.wrongVocabularyCount += 1
+  state.currentQuestionIndex += 1
+  return { ...result, nextQuestion: state.currentQuestionIndex < 20 }
+}
+
+export function recordCheckIn(state: TelegramLearnerState, isoDate = new Date().toISOString().slice(0, 10)) {
+  if (state.lastCheckInDate !== isoDate) {
+    state.checkInDays += 1
+    state.lastCheckInDate = isoDate
+  }
+  return state
+}
+
+export function buildLeaderboardText(learners: TelegramLearnerState[]) {
+  const rows = [...learners].sort((a, b) =>
+    b.learnedVocabularyCount - a.learnedVocabularyCount ||
+    a.wrongVocabularyCount - b.wrongVocabularyCount ||
+    b.checkInDays - a.checkInDays,
+  )
+
+  if (!rows.length) return '🏆 排行榜\n\n还没有学习记录。'
+
+  return [
+    '🏆 排行榜',
+    '',
+    ...rows.map((learner, index) =>
+      `${index + 1}. ${learner.displayName} — 学会 ${learner.learnedVocabularyCount}｜错题 ${learner.wrongVocabularyCount}｜打卡 ${learner.checkInDays} 天`,
+    ),
+  ].join('\n')
 }
 
 export function callbackKeyboard(options: string[], prefix: string) {

@@ -94,6 +94,18 @@ create table if not exists public.tts_audio_cache (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.telegram_learners (
+  id uuid primary key default gen_random_uuid(),
+  telegram_user_id text not null unique,
+  display_name text not null,
+  learned_vocabulary_count integer not null default 0,
+  wrong_vocabulary_count integer not null default 0,
+  check_in_days integer not null default 0,
+  last_check_in_date date,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 alter table public.vocabulary_items enable row level security;
 alter table public.user_vocabulary_progress enable row level security;
 alter table public.quiz_sessions enable row level security;
@@ -102,6 +114,7 @@ alter table public.grammar_items enable row level security;
 alter table public.translation_exercises enable row level security;
 alter table public.speaking_exercises enable row level security;
 alter table public.tts_audio_cache enable row level security;
+alter table public.telegram_learners enable row level security;
 
 drop policy if exists "vocabulary_items_read_all" on public.vocabulary_items;
 create policy "vocabulary_items_read_all" on public.vocabulary_items for select using (true);
@@ -109,6 +122,8 @@ drop policy if exists "grammar_items_read_all" on public.grammar_items;
 create policy "grammar_items_read_all" on public.grammar_items for select using (true);
 drop policy if exists "tts_audio_cache_read_all" on public.tts_audio_cache;
 create policy "tts_audio_cache_read_all" on public.tts_audio_cache for select using (true);
+drop policy if exists "telegram_learners_read_all" on public.telegram_learners;
+create policy "telegram_learners_read_all" on public.telegram_learners for select using (true);
 
 drop policy if exists "user_vocabulary_progress_own" on public.user_vocabulary_progress;
 create policy "user_vocabulary_progress_own" on public.user_vocabulary_progress for all using (auth.uid() = user_id) with check (auth.uid() = user_id);

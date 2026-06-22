@@ -8,6 +8,10 @@ import {
   generateGrammarQuestion,
   evaluateTranslation,
   buildReadingPrompt,
+  buildLeaderboardText,
+  createTelegramLearnerState,
+  recordVocabularyAnswer,
+  getNextVocabularyQuestion,
 } from './spanish-coach-bot'
 
 describe('AI Spanish Coach bot flows', () => {
@@ -22,6 +26,7 @@ describe('AI Spanish Coach bot flows', () => {
       '句子朗读',
       '学习进度',
       '错题本',
+      '排行榜',
     ])
   })
 
@@ -77,5 +82,39 @@ describe('AI Spanish Coach bot flows', () => {
     expect(prompt.sentenceEs.length).toBeGreaterThan(0)
     expect(prompt.sentenceZh.length).toBeGreaterThan(0)
     expect(prompt.instructions).toContain('跟读')
+  })
+
+  it('builds per-user progress and continues after wrong vocabulary answers', () => {
+    const userA = createTelegramLearnerState('101', 'Ana')
+    const userB = createTelegramLearnerState('202', 'Bao')
+    const words = generateVocabularySet('new', 'A1')
+    const first = getNextVocabularyQuestion(userA, words)
+    const wrong = first.options.find((option) => option !== first.correctAnswer)!
+
+    const result = recordVocabularyAnswer(userA, first, wrong)
+    const second = getNextVocabularyQuestion(userA, words)
+
+    expect(result.correct).toBe(false)
+    expect(result.nextQuestion).toBe(true)
+    expect(userA.wrongVocabularyCount).toBe(1)
+    expect(userA.currentQuestionIndex).toBe(1)
+    expect(second.prompt).toContain('2/20')
+    expect(userB.currentQuestionIndex).toBe(0)
+    expect(userB.wrongVocabularyCount).toBe(0)
+  })
+
+  it('builds leaderboard sorted by learned words, mistakes, and check-in days', () => {
+    const learners = [
+      { ...createTelegramLearnerState('1', 'A'), learnedVocabularyCount: 10, wrongVocabularyCount: 3, checkInDays: 2 },
+      { ...createTelegramLearnerState('2', 'B'), learnedVocabularyCount: 20, wrongVocabularyCount: 1, checkInDays: 5 },
+    ]
+
+    const text = buildLeaderboardText(learners)
+
+    expect(text).toContain('排行榜')
+    expect(text.indexOf('B')).toBeLessThan(text.indexOf('A'))
+    expect(text).toContain('学会 20')
+    expect(text).toContain('错题 1')
+    expect(text).toContain('打卡 5 天')
   })
 })
