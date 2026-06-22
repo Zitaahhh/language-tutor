@@ -85,7 +85,7 @@ export function buildBotMainMenu(): CoachMenu {
       ],
       [
         { text: '句子翻译', callback_data: 'menu:translate' },
-        { text: '句子朗读', callback_data: 'menu:reading' },
+        { text: '口语测试', callback_data: 'menu:speaking' },
       ],
       [
         { text: '学习进度', callback_data: 'menu:progress' },
@@ -401,6 +401,115 @@ export function buildQuizAnswerKeyboard(session: QuizSession, question: QuizQues
   return question.options.map((option, index) => [
     { text: `${String.fromCharCode(65 + index)}. ${option}`, callback_data: `quiz-answer:${session.id}:${index}` },
   ])
+}
+
+export function buildQuizReviewMessage(session: QuizSession, answerIndex: number) {
+  const answer = session.answers[answerIndex]
+  if (!answer) return '这道题还没有答题记录。'
+  return [
+    `${session.title ?? getQuizTypeTitle(session.quizType)}｜第 ${answerIndex + 1}/${session.questions.length} 题`,
+    '',
+    answer.correct ? '✅ 回答正确' : '❌ 回答错误',
+    '',
+    answer.prompt.replace(/\n/g, ' '),
+    `你的答案：${answer.selectedAnswer}`,
+    `正确答案：${answer.correctAnswer}`,
+    '',
+    `知识点：${answer.explanation ?? '请对照正确答案复习。'}`,
+  ].join('\n')
+}
+
+export function buildQuizReviewKeyboard(session: QuizSession, answerIndex: number) {
+  return [[
+    { text: '上一题', callback_data: `quiz-review:${session.id}:${Math.max(0, answerIndex - 1)}` },
+    { text: answerIndex >= session.answers.length - 1 ? '下一题' : '下一题', callback_data: `quiz-next:${session.id}` },
+  ]]
+}
+
+export type SpeakingMode = 'read_sentence' | 'answer_question'
+
+export type SpeakingPrompt = {
+  mode: SpeakingMode
+  prompt: string
+  targetAnswer: string
+  guide: string
+}
+
+export type SpeakingFeedback = {
+  score: number
+  transcript: string
+  guidance: string
+  corrected: string
+}
+
+export function buildSpeakingModeMenu(): CoachMenu {
+  return {
+    text: '请选择口语测试类型：',
+    buttons: [
+      [{ text: '读句子', callback_data: 'speaking:read_sentence' }],
+      [{ text: '回答问题', callback_data: 'speaking:answer_question' }],
+      [{ text: '返回主菜单', callback_data: 'menu:main' }],
+    ],
+  }
+}
+
+export function generateSpeakingPromptSet(mode: SpeakingMode, level = 'A1'): SpeakingPrompt[] {
+  return generateVocabularySet('new', level).map((word) =>
+    mode === 'read_sentence'
+      ? {
+          mode,
+          prompt: `请朗读这个句子：\n${word.exampleEs}\n${word.exampleZh}`,
+          targetAnswer: word.exampleEs,
+          guide: '注意重音、元音清晰度和整句连贯度。',
+        }
+      : {
+          mode,
+          prompt: `请用西语语音回答问题：\n¿Qué significa “${word.spanish}”?`,
+          targetAnswer: word.meaningZh,
+          guide: `可以回答：${word.spanish} significa ${word.meaningZh}.`,
+        },
+  )
+}
+
+export function buildSpeakingPromptMessage(prompt: SpeakingPrompt, index: number, total: number) {
+  return [`口语测试｜第 ${index + 1}/${total} 题`, '', prompt.prompt, '', '请发送语音回答。'].join('\n')
+}
+
+function normalizeSpeech(text: string) {
+  return text
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zñáéíóúü0-9\s]/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+export function evaluateSpokenAttempt(prompt: SpeakingPrompt, transcript: string): SpeakingFeedback {
+  const target = normalizeSpeech(prompt.targetAnswer)
+  const spoken = normalizeSpeech(transcript)
+  const targetTokens = target.split(' ').filter(Boolean)
+  const spokenTokens = new Set(spoken.split(' ').filter(Boolean))
+  const matched = targetTokens.filter((token) => spokenTokens.has(token)).length
+  const score = targetTokens.length ? Math.max(30, Math.round((matched / targetTokens.length) * 100)) : 60
+  return {
+    score,
+    transcript,
+    corrected: prompt.targetAnswer,
+    guidance: score >= 80 ? `很不错！${prompt.guide}` : `建议再练：${prompt.guide} 标准参考：${prompt.targetAnswer}`,
+  }
+}
+
+export function buildSpeakingFeedbackMessage(prompt: SpeakingPrompt, feedback: SpeakingFeedback, index: number, total: number) {
+  return [
+    `口语评分｜第 ${index + 1}/${total} 题`,
+    '',
+    `分数：${feedback.score}/100`,
+    `识别文本：${feedback.transcript || '未识别到语音内容'}`,
+    `参考答案：${feedback.corrected}`,
+    '',
+    `指导：${feedback.guidance}`,
+  ].join('\n')
 }
 
 export function callbackKeyboard(options: string[], prefix: string) {

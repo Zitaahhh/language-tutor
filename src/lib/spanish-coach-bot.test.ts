@@ -19,6 +19,13 @@ import {
   getNextQuizQuestion,
   buildQuizQuestionMessage,
   buildQuizAnswerKeyboard,
+  buildQuizReviewMessage,
+  buildQuizReviewKeyboard,
+  buildSpeakingModeMenu,
+  buildSpeakingPromptMessage,
+  buildSpeakingFeedbackMessage,
+  evaluateSpokenAttempt,
+  generateSpeakingPromptSet,
   generateGrammarQuestionSet,
   generateTranslationQuestionSet,
   generateReadingQuestionSet,
@@ -34,7 +41,7 @@ describe('AI Spanish Coach bot flows', () => {
       '词汇测试',
       '语法测试',
       '句子翻译',
-      '句子朗读',
+      '口语测试',
       '学习进度',
       '错题本',
       '排行榜',
@@ -190,5 +197,31 @@ describe('AI Spanish Coach bot flows', () => {
     expect(generateTranslationQuestionSet('es-zh')[0].options).toHaveLength(4)
     expect(generateReadingQuestionSet('A1')).toHaveLength(20)
     expect(generateReadingQuestionSet('A1')[0].correctAnswer).toContain('viaje')
+  })
+
+  it('shows answer review with correctness, knowledge point, previous and next controls', () => {
+    const session = createQuizSession('telegram-3', 'grammar', generateGrammarQuestionSet('A1'), '语法测试')
+    const question = getNextQuizQuestion(session)!
+    recordQuizAnswer(session, question.options.find((option) => option !== question.correctAnswer)!)
+
+    const review = buildQuizReviewMessage(session, 0)
+    const keyboard = buildQuizReviewKeyboard(session, 0)
+
+    expect(review).toContain('❌')
+    expect(review).toContain('正确答案')
+    expect(review).toContain('知识点')
+    expect(keyboard.flat().map((button) => button.text)).toEqual(['上一题', '下一题'])
+  })
+
+  it('builds oral test modes and scores spoken attempts from transcripts', () => {
+    const menu = buildSpeakingModeMenu()
+    const prompts = generateSpeakingPromptSet('read_sentence', 'A1')
+    const feedback = evaluateSpokenAttempt(prompts[0], 'Mi viaje a España fue increible')
+
+    expect(menu.buttons.flat().map((button) => button.text)).toEqual(['读句子', '回答问题', '返回主菜单'])
+    expect(prompts).toHaveLength(20)
+    expect(buildSpeakingPromptMessage(prompts[0], 0, 20)).toContain('请发送语音')
+    expect(feedback.score).toBeGreaterThanOrEqual(80)
+    expect(buildSpeakingFeedbackMessage(prompts[0], feedback, 0, 20)).toContain('口语评分')
   })
 })
