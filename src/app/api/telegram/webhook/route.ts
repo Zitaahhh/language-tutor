@@ -64,6 +64,13 @@ const learnerWordSets = new Map<string, ReturnType<typeof generateVocabularySet>
 const quizSessions = new Map<string, QuizSession>()
 const speakingSessions = new Map<string, { prompts: SpeakingPrompt[]; currentIndex: number; scores: number[]; mode: SpeakingMode; lastMessageId?: number }>()
 
+const fallbackSpeakingPrompt: SpeakingPrompt = {
+  mode: 'read_sentence',
+  prompt: '请朗读 Day 1 句子：\nHola, me llamo Zita. Mucho gusto.\n你好，我叫 Zita。很高兴认识你。',
+  targetAnswer: 'Hola, me llamo Zita. Mucho gusto.',
+  guide: '注意 Hola 的 h 不发音；llamo 的 ll 按拉美通用音接近 y/ʝ；每个元音 a/e/i/o/u 要清楚。',
+}
+
 function getLearner(from?: { id?: number; username?: string; first_name?: string }) {
   const telegramUserId = String(from?.id ?? 'anonymous')
   const displayName = from?.username ? `@${from.username}` : from?.first_name || telegramUserId
@@ -234,6 +241,41 @@ async function transcribeTelegramVoice(fileId: string) {
   return typeof data?.text === 'string' ? data.text : ''
 }
 
+async function sendPronunciationAudio(chatId: number | string, text: string) {
+  const openAiKey = process.env.OPENAI_API_KEY
+  if (openAiKey) {
+    const response = await fetch('https://api.openai.com/v1/audio/speech', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${openAiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ model: 'tts-1', voice: 'nova', input: text, response_format: 'mp3' }),
+    }).catch(() => null)
+    if (response?.ok) {
+      const audio = await response.blob()
+      const form = new FormData()
+      form.append('chat_id', String(chatId))
+      form.append('caption', `正确读音：${text}`)
+      form.append('audio', audio, 'spanish-pronunciation.mp3')
+      const telegramResponse = await fetch(telegramApiUrl('sendAudio'), { method: 'POST', body: form }).catch(() => null)
+      if (telegramResponse?.ok) return telegramResponse.json().catch(() => null)
+    }
+  }
+
+  const ttsUrl = `https://translate.google.com/translate_tts?ie=UTF-8&client=tw-ob&tl=es&q=${encodeURIComponent(text)}`
+  const response = await callTelegram('sendAudio', {
+    chat_id: chatId,
+    audio: ttsUrl,
+    caption: `正确读音：${text}`,
+  })
+  if (response?.ok) return response
+  return callTelegram('sendMessage', {
+    chat_id: chatId,
+    text: `正确读音参考：${text}\n请注意：Hola 的 h 不发音；me llamo 中 ll 接近 y/ʝ；Mucho gusto 每个元音要清楚。`,
+  })
+}
+
 async function answerCallback(callbackId: string) {
   return callTelegram('answerCallbackQuery', { callback_query_id: callbackId })
 }
@@ -254,24 +296,24 @@ async function handleTextMessage(message: TelegramMessage) {
 
   if (message.voice) {
     const session = speakingSessions.get(learner.telegramUserId)
-    if (!session) {
-      if (!isGroupMessage(message)) {
-        await callTelegram('sendMessage', { chat_id: chatId, text: '请先选择“口语测试”并开始题目，再发送语音。' })
-      }
-      return
-    }
-    const prompt = session.prompts[session.currentIndex]
-    if (!prompt) return
+    const activePrompt = session?.prompts[session.currentIndex]
+    const prompt = activePrompt ?? fallbackSpeakingPrompt
     const transcript = await transcribeTelegramVoice(message.voice.file_id)
     const feedback = evaluateSpokenAttempt(prompt, transcript)
-    session.scores.push(feedback.score)
+    session?.scores.push(feedback.score)
     void persistSpeakingExercise(toSpeakingExerciseInsert(learner.telegramUserId, prompt, feedback))
     await callTelegram('sendMessage', {
       chat_id: chatId,
-      text: buildSpeakingFeedbackMessage(prompt, feedback, session.currentIndex, session.prompts.length),
+      text: [
+        activePrompt ? '' : '没有检测到正在进行的口语测试，我先按 Day 1 默认句子给你纠正：',
+        buildSpeakingFeedbackMessage(prompt, feedback, session?.currentIndex ?? 0, session?.prompts.length ?? 1),
+      ].filter((line) => line.length > 0).join('\n\n'),
     })
-    session.currentIndex += 1
-    await sendSpeakingPrompt(chatId, learner.telegramUserId)
+    await sendPronunciationAudio(chatId, prompt.targetAnswer)
+    if (session && activePrompt) {
+      session.currentIndex += 1
+      await sendSpeakingPrompt(chatId, learner.telegramUserId)
+    }
     return
   }
 
