@@ -305,7 +305,7 @@ async function sendSpeakingPrompt(chatId: number | string, learnerId: string) {
   return response
 }
 
-async function transcribeTelegramVoice(fileId: string) {
+async function transcribeTelegramVoice(fileId: string, language?: string) {
   const provider = process.env.GROQ_API_KEY ? 'groq' : process.env.OPENAI_API_KEY ? 'openai' : null
   if (!provider) return ''
   const fileInfo = await callTelegram('getFile', { file_id: fileId })
@@ -316,7 +316,7 @@ async function transcribeTelegramVoice(fileId: string) {
   if (!audio) return ''
   const form = new FormData()
   form.append('model', provider === 'groq' ? 'whisper-large-v3-turbo' : 'whisper-1')
-  form.append('language', 'es')
+  if (language) form.append('language', language)
   form.append('file', audio, 'voice.ogg')
   const response = await fetch(
     provider === 'groq' ? 'https://api.groq.com/openai/v1/audio/transcriptions' : 'https://api.openai.com/v1/audio/transcriptions',
@@ -329,6 +329,36 @@ async function transcribeTelegramVoice(fileId: string) {
   if (!response?.ok) return ''
   const data = await response.json().catch(() => null)
   return typeof data?.text === 'string' ? data.text : ''
+}
+
+async function translateTranscriptToSpanish(transcript: string) {
+  const cleaned = transcript.trim()
+  if (!cleaned) return ''
+  const openAiKey = process.env.OPENAI_API_KEY
+  if (!openAiKey) return cleaned
+
+  const response = await fetch('https://api.openai.com/v1/chat/completions', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${openAiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      model: 'gpt-4o-mini',
+      temperature: 0.2,
+      messages: [
+        {
+          role: 'system',
+          content: 'Translate the user utterance into natural beginner-friendly Spanish. Return only the Spanish translation, no quotes, no explanation.',
+        },
+        { role: 'user', content: cleaned },
+      ],
+    }),
+  }).catch(() => null)
+  if (!response?.ok) return cleaned
+  const data = await response.json().catch(() => null)
+  const translated = data?.choices?.[0]?.message?.content
+  return typeof translated === 'string' && translated.trim() ? translated.trim() : cleaned
 }
 
 async function sendPronunciationAudio(chatId: number | string, text: string) {
@@ -404,8 +434,39 @@ async function handleTextMessage(message: TelegramMessage) {
       persistentSession = await loadPersistentSpeakingSession(learner.telegramUserId)
     }
     const activePrompt = session?.prompts[session.currentIndex]
-    const transcript = await transcribeTelegramVoice(message.voice.file_id)
+    const transcript = await transcribeTelegramVoice(message.voice.file_id, activePrompt ? 'es' : undefined)
     const fallbackMatch = activePrompt ? null : findBestSpeakingPromptForTranscript(transcript)
+
+    if (!activePrompt && !fallbackMatch) {
+      const translated = await translateTranscriptToSpanish(transcript)
+      const translationPrompt: SpeakingPrompt = {
+        mode: 'answer_question',
+        prompt: `自由语音翻译：${transcript}`,
+        targetAnswer: translated,
+        guide: '这是自由语音翻译，不按口语测试题评分；请跟读西语译文，注意元音清晰。',
+      }
+      void persistSpeakingExercise({
+        telegram_user_id: learner.telegramUserId,
+        target_sentence_es: translated,
+        target_sentence_zh: transcript,
+        transcript,
+        feedback: `自由语音翻译：${translated}`,
+        score: 0,
+      })
+      await callTelegram('sendMessage', {
+        chat_id: chatId,
+        text: [
+          '没有检测到正在进行的口语测试，也没有匹配到相近题目。',
+          '我把这条语音当作自由表达来处理：',
+          '',
+          `识别内容：${transcript || '未识别到清晰内容'}`,
+          `西班牙语：${translated || '暂时无法翻译，请再发一次更清楚的语音。'}`,
+        ].join('\n'),
+      })
+      if (translated) await sendPronunciationAudio(chatId, translationPrompt.targetAnswer)
+      return
+    }
+
     const prompt = activePrompt ?? fallbackMatch?.prompt ?? fallbackSpeakingPrompt
     const feedback = evaluateSpokenAttempt(prompt, transcript)
     session?.scores.push(feedback.score)
