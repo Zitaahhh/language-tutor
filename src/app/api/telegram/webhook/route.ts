@@ -28,7 +28,9 @@ import {
   recordQuizAnswer,
   recordVocabularyAnswer,
   toTelegramLearnerUpsert,
+  toSpeakingExerciseInsert,
   type QuizSession,
+  type SpeakingExerciseInsert,
   type SpeakingMode,
   type SpeakingPrompt,
   type TelegramLearnerState,
@@ -117,6 +119,20 @@ async function persistLearner(learner: TelegramLearnerState) {
   }).catch(() => null)
 }
 
+async function persistSpeakingExercise(exercise: SpeakingExerciseInsert) {
+  const cfg = createServiceSupabase()
+  if (!cfg) return
+  await fetch(`${cfg.url}/rest/v1/speaking_exercises`, {
+    method: 'POST',
+    headers: {
+      apikey: cfg.key,
+      Authorization: `Bearer ${cfg.key}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(exercise),
+  }).catch(() => null)
+}
+
 async function loadLeaderboardFromSupabase() {
   const cfg = createServiceSupabase()
   if (!cfg) return [...learnerStates.values()]
@@ -193,8 +209,8 @@ async function sendSpeakingPrompt(chatId: number | string, learnerId: string) {
 }
 
 async function transcribeTelegramVoice(fileId: string) {
-  const openAiKey = process.env.OPENAI_API_KEY
-  if (!openAiKey) return ''
+  const provider = process.env.GROQ_API_KEY ? 'groq' : process.env.OPENAI_API_KEY ? 'openai' : null
+  if (!provider) return ''
   const fileInfo = await callTelegram('getFile', { file_id: fileId })
   const filePath = fileInfo?.result?.file_path
   const token = process.env.TELEGRAM_BOT_TOKEN
@@ -202,14 +218,17 @@ async function transcribeTelegramVoice(fileId: string) {
   const audio = await fetch(`https://api.telegram.org/file/bot${token}/${filePath}`).then((response) => response.blob()).catch(() => null)
   if (!audio) return ''
   const form = new FormData()
-  form.append('model', 'whisper-1')
+  form.append('model', provider === 'groq' ? 'whisper-large-v3-turbo' : 'whisper-1')
   form.append('language', 'es')
   form.append('file', audio, 'voice.ogg')
-  const response = await fetch('https://api.openai.com/v1/audio/transcriptions', {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${openAiKey}` },
-    body: form,
-  }).catch(() => null)
+  const response = await fetch(
+    provider === 'groq' ? 'https://api.groq.com/openai/v1/audio/transcriptions' : 'https://api.openai.com/v1/audio/transcriptions',
+    {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${provider === 'groq' ? process.env.GROQ_API_KEY : process.env.OPENAI_API_KEY}` },
+      body: form,
+    },
+  ).catch(() => null)
   if (!response?.ok) return ''
   const data = await response.json().catch(() => null)
   return typeof data?.text === 'string' ? data.text : ''
@@ -233,14 +252,12 @@ async function handleTextMessage(message: TelegramMessage) {
   const text = message.text ?? ''
   const learner = getLearner(message.from)
 
-  if (isGroupMessage(message) && !mentionsBot(text) && !text.startsWith('/')) {
-    return
-  }
-
   if (message.voice) {
     const session = speakingSessions.get(learner.telegramUserId)
     if (!session) {
-      await callTelegram('sendMessage', { chat_id: chatId, text: '请先选择“口语测试”并开始题目，再发送语音。' })
+      if (!isGroupMessage(message)) {
+        await callTelegram('sendMessage', { chat_id: chatId, text: '请先选择“口语测试”并开始题目，再发送语音。' })
+      }
       return
     }
     const prompt = session.prompts[session.currentIndex]
@@ -248,12 +265,17 @@ async function handleTextMessage(message: TelegramMessage) {
     const transcript = await transcribeTelegramVoice(message.voice.file_id)
     const feedback = evaluateSpokenAttempt(prompt, transcript)
     session.scores.push(feedback.score)
+    void persistSpeakingExercise(toSpeakingExerciseInsert(learner.telegramUserId, prompt, feedback))
     await callTelegram('sendMessage', {
       chat_id: chatId,
       text: buildSpeakingFeedbackMessage(prompt, feedback, session.currentIndex, session.prompts.length),
     })
     session.currentIndex += 1
     await sendSpeakingPrompt(chatId, learner.telegramUserId)
+    return
+  }
+
+  if (isGroupMessage(message) && !mentionsBot(text) && !text.startsWith('/')) {
     return
   }
 

@@ -30,6 +30,7 @@ import {
   generateTranslationQuestionSet,
   generateReadingQuestionSet,
   generateVocabularyQuestionSet,
+  toSpeakingExerciseInsert,
 } from './spanish-coach-bot'
 
 describe('AI Spanish Coach bot flows', () => {
@@ -217,11 +218,29 @@ describe('AI Spanish Coach bot flows', () => {
     const menu = buildSpeakingModeMenu()
     const prompts = generateSpeakingPromptSet('read_sentence', 'A1')
     const feedback = evaluateSpokenAttempt(prompts[0], 'Mi viaje a España fue increible')
+    const insert = toSpeakingExerciseInsert('telegram-voice-1', prompts[0], feedback)
 
     expect(menu.buttons.flat().map((button) => button.text)).toEqual(['读句子', '回答问题', '返回主菜单'])
     expect(prompts).toHaveLength(20)
     expect(buildSpeakingPromptMessage(prompts[0], 0, 20)).toContain('请发送语音')
     expect(feedback.score).toBeGreaterThanOrEqual(80)
+    expect(feedback.needsReview).toBe(false)
+    expect(feedback.recognizedWords).toContain('viaje')
     expect(buildSpeakingFeedbackMessage(prompts[0], feedback, 0, 20)).toContain('口语评分')
+    expect(insert).toMatchObject({
+      telegram_user_id: 'telegram-voice-1',
+      target_sentence_es: prompts[0].targetAnswer,
+      transcript: 'Mi viaje a España fue increible',
+      score: feedback.score,
+    })
+  })
+
+  it('marks low-score spoken attempts for review with missing words', () => {
+    const [prompt] = generateSpeakingPromptSet('read_sentence', 'A1')
+    const feedback = evaluateSpokenAttempt(prompt, 'Mi viaje')
+
+    expect(feedback.needsReview).toBe(true)
+    expect(feedback.missingWords.length).toBeGreaterThan(0)
+    expect(buildSpeakingFeedbackMessage(prompt, feedback, 0, 20)).toContain('已加入口语复习/错题队列')
   })
 })

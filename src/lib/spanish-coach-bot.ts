@@ -440,6 +440,18 @@ export type SpeakingFeedback = {
   transcript: string
   guidance: string
   corrected: string
+  missingWords: string[]
+  recognizedWords: string[]
+  needsReview: boolean
+}
+
+export type SpeakingExerciseInsert = {
+  telegram_user_id: string
+  target_sentence_es: string
+  target_sentence_zh: string | null
+  transcript: string
+  feedback: string
+  score: number
 }
 
 export function buildSpeakingModeMenu(): CoachMenu {
@@ -490,26 +502,59 @@ export function evaluateSpokenAttempt(prompt: SpeakingPrompt, transcript: string
   const spoken = normalizeSpeech(transcript)
   const targetTokens = target.split(' ').filter(Boolean)
   const spokenTokens = new Set(spoken.split(' ').filter(Boolean))
-  const matched = targetTokens.filter((token) => spokenTokens.has(token)).length
-  const score = targetTokens.length ? Math.max(30, Math.round((matched / targetTokens.length) * 100)) : 60
+  const recognizedWords = targetTokens.filter((token) => spokenTokens.has(token))
+  const missingWords = targetTokens.filter((token) => !spokenTokens.has(token))
+  const score = targetTokens.length ? Math.max(30, Math.round((recognizedWords.length / targetTokens.length) * 100)) : 60
+  const needsReview = score < 80
+  const guidance = buildSpeakingGuidance(prompt, score, missingWords)
   return {
     score,
     transcript,
     corrected: prompt.targetAnswer,
-    guidance: score >= 80 ? `很不错！${prompt.guide}` : `建议再练：${prompt.guide} 标准参考：${prompt.targetAnswer}`,
+    guidance,
+    missingWords,
+    recognizedWords,
+    needsReview,
   }
 }
 
+function buildSpeakingGuidance(prompt: SpeakingPrompt, score: number, missingWords: string[]) {
+  if (!prompt.targetAnswer.trim()) return '没有标准答案，请重新开始本题。'
+  if (score >= 90) return `很好！语音识别和目标句高度一致。${prompt.guide}`
+  if (score >= 80) return `不错，基本读对了。${prompt.guide}`
+  const missing = missingWords.length ? `\n需要重点重读：${missingWords.join(' / ')}` : ''
+  return `建议再练一遍。${prompt.guide}${missing}\n标准参考：${prompt.targetAnswer}`
+}
+
 export function buildSpeakingFeedbackMessage(prompt: SpeakingPrompt, feedback: SpeakingFeedback, index: number, total: number) {
+  const reviewLine = feedback.needsReview ? '已加入口语复习/错题队列。' : '本题通过，继续下一题。'
+  const missingLine = feedback.missingWords.length ? `需要重读：${feedback.missingWords.join(' / ')}` : undefined
   return [
     `口语评分｜第 ${index + 1}/${total} 题`,
     '',
     `分数：${feedback.score}/100`,
     `识别文本：${feedback.transcript || '未识别到语音内容'}`,
     `参考答案：${feedback.corrected}`,
+    missingLine,
     '',
     `指导：${feedback.guidance}`,
-  ].join('\n')
+    reviewLine,
+  ].filter(Boolean).join('\n')
+}
+
+export function toSpeakingExerciseInsert(
+  telegramUserId: string,
+  prompt: SpeakingPrompt,
+  feedback: SpeakingFeedback,
+): SpeakingExerciseInsert {
+  return {
+    telegram_user_id: telegramUserId,
+    target_sentence_es: prompt.targetAnswer,
+    target_sentence_zh: prompt.prompt,
+    transcript: feedback.transcript,
+    feedback: buildSpeakingFeedbackMessage(prompt, feedback, 0, 1),
+    score: feedback.score,
+  }
 }
 
 export function callbackKeyboard(options: string[], prefix: string) {
