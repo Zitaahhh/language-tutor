@@ -62,12 +62,20 @@ describe('AI Spanish Coach bot flows', () => {
 
   it('builds vocabulary sub-menu for new, old, and mistake review modes', () => {
     const menu = buildVocabularyModeMenu()
+    const englishMenu = buildVocabularyModeMenu('en')
 
     expect(menu.buttons.flat().map((button) => button.text)).toEqual([
       '学习20个新词汇',
       '复习20个旧词汇',
       '错题复习',
       '返回主菜单',
+    ])
+    expect(englishMenu.text).toBe('Choose a vocabulary practice type:')
+    expect(englishMenu.buttons.flat().map((button) => button.text)).toEqual([
+      'Learn 20 New Words',
+      'Review 20 Old Words',
+      'Review Mistakes',
+      'Back to Main Menu',
     ])
   })
 

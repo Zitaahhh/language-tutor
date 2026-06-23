@@ -622,7 +622,7 @@ async function handleTextMessage(message: TelegramMessage) {
   }
 
   if (text.startsWith('/vocab')) {
-    await sendMenu(chatId, buildVocabularyModeMenu())
+    await sendMenu(chatId, buildVocabularyModeMenu(getLearnerLanguage(learner.telegramUserId)))
     return
   }
 
@@ -661,7 +661,7 @@ async function handleCallback(callback: TelegramCallbackQuery) {
     await callTelegram('sendMessage', { chat_id: chatId, text: buildLanguageChangedMessage(language) })
     return sendMenu(chatId, getMainMenuForLearner(learner.telegramUserId))
   }
-  if (data === 'menu:vocab') return sendMenu(chatId, buildVocabularyModeMenu())
+  if (data === 'menu:vocab') return sendMenu(chatId, buildVocabularyModeMenu(getLearnerLanguage(learner.telegramUserId)))
   if (data === 'menu:translate') return sendMenu(chatId, buildTranslationMenu())
 
   if (data === 'menu:grammar') {

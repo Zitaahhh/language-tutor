@@ -135,7 +135,19 @@ export function buildLanguageChangedMessage(language: InterfaceLanguage) {
   return language === 'en' ? 'Language switched to English.' : '已切换为中文。'
 }
 
-export function buildVocabularyModeMenu(): CoachMenu {
+export function buildVocabularyModeMenu(language: InterfaceLanguage = 'zh'): CoachMenu {
+  if (language === 'en') {
+    return {
+      text: 'Choose a vocabulary practice type:',
+      buttons: [
+        [{ text: 'Learn 20 New Words', callback_data: 'vocab:new' }],
+        [{ text: 'Review 20 Old Words', callback_data: 'vocab:old' }],
+        [{ text: 'Review Mistakes', callback_data: 'vocab:mistakes' }],
+        [{ text: 'Back to Main Menu', callback_data: 'menu:main' }],
+      ],
+    }
+  }
+
   return {
     text: '请选择词汇练习类型：',
     buttons: [
