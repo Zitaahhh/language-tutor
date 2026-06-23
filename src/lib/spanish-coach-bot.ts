@@ -1,5 +1,6 @@
 export type CoachButton = { text: string; callback_data: string }
 export type CoachMenu = { text: string; buttons: CoachButton[][] }
+export type InterfaceLanguage = 'zh' | 'en'
 export type VocabMode = 'new' | 'old' | 'mistakes'
 
 export type VocabularyItem = {
@@ -75,7 +76,29 @@ const a1Vocabulary: VocabularyItem[] = [
   ['pan', '面包', 'Compro pan cada mañana.', '我每天早上买面包。'],
 ].map(([spanish, meaningZh, exampleEs, exampleZh]) => ({ spanish, meaningZh, exampleEs, exampleZh, level: 'A1' }))
 
-export function buildBotMainMenu(): CoachMenu {
+export function buildBotMainMenu(language: InterfaceLanguage = 'zh'): CoachMenu {
+  if (language === 'en') {
+    return {
+      text: '🇪🇸 AI Spanish Coach\n\nChoose a practice mode:',
+      buttons: [
+        [
+          { text: 'Vocabulary Quiz', callback_data: 'menu:vocab' },
+          { text: 'Grammar Quiz', callback_data: 'menu:grammar' },
+        ],
+        [
+          { text: 'Sentence Translation', callback_data: 'menu:translate' },
+          { text: 'Speaking Test', callback_data: 'menu:speaking' },
+        ],
+        [
+          { text: 'Progress', callback_data: 'menu:progress' },
+          { text: 'Mistake Book', callback_data: 'menu:mistakes' },
+        ],
+        [{ text: 'Leaderboard', callback_data: 'menu:leaderboard' }],
+        [{ text: '🌐 中文 / English', callback_data: 'menu:language' }],
+      ],
+    }
+  }
+
   return {
     text: '🇪🇸 AI Spanish Coach\n\n请选择练习模式：',
     buttons: [
@@ -92,8 +115,24 @@ export function buildBotMainMenu(): CoachMenu {
         { text: '错题本', callback_data: 'menu:mistakes' },
       ],
       [{ text: '排行榜', callback_data: 'menu:leaderboard' }],
+      [{ text: '🌐 中文 / English', callback_data: 'menu:language' }],
     ],
   }
+}
+
+export function buildLanguageMenu(): CoachMenu {
+  return {
+    text: '请选择界面语言 / Choose interface language:',
+    buttons: [
+      [{ text: '中文', callback_data: 'lang:zh' }],
+      [{ text: 'English', callback_data: 'lang:en' }],
+      [{ text: '返回主菜单 / Back', callback_data: 'menu:main' }],
+    ],
+  }
+}
+
+export function buildLanguageChangedMessage(language: InterfaceLanguage) {
+  return language === 'en' ? 'Language switched to English.' : '已切换为中文。'
 }
 
 export function buildVocabularyModeMenu(): CoachMenu {
@@ -280,6 +319,22 @@ export type QuizSession = {
   }>
 }
 
+export type MistakeStats = {
+  vocabulary: number
+  grammar: number
+  translation: number
+  reading: number
+  speaking: number
+}
+
+export const emptyMistakeStats: MistakeStats = {
+  vocabulary: 0,
+  grammar: 0,
+  translation: 0,
+  reading: 0,
+  speaking: 0,
+}
+
 export function createQuizSession(
   telegramUserId: string,
   quizType: QuizSession['quizType'],
@@ -325,6 +380,23 @@ export function buildQuizSummary(session: QuizSession) {
     `${index + 1}. ${answer.correct ? '✅' : '❌'} ${answer.prompt.replace(/\n/g, ' ')}\n你的答案：${answer.selectedAnswer}\n正确答案：${answer.correctAnswer}${answer.explanation ? `\n解析：${answer.explanation}` : ''}`,
   )
   return [`🎉 ${session.title ?? '本轮'}${total}题完成`, `正确：${session.correctCount}/${total}`, `正确率：${accuracy}%`, '', '答题结果：', ...rows].join('\n')
+}
+
+export function buildMistakeBookText(displayName: string, stats: Partial<MistakeStats> = {}) {
+  const merged = { ...emptyMistakeStats, ...stats }
+  const total = merged.vocabulary + merged.grammar + merged.translation + merged.reading + merged.speaking
+  return [
+    `错题本：${displayName}`,
+    `当前错题总数：${total}`,
+    '',
+    `词汇错题：${merged.vocabulary}`,
+    `语法错题：${merged.grammar}`,
+    `翻译错题：${merged.translation}`,
+    `朗读/阅读错题：${merged.reading}`,
+    `口语复习项：${merged.speaking}`,
+    '',
+    total > 0 ? '继续点击对应测试模式复习错题。' : '目前没有记录到错题。',
+  ].join('\n')
 }
 
 export function generateVocabularyQuestionSet(mode: VocabMode, level = 'A1'): QuizQuestion[] {

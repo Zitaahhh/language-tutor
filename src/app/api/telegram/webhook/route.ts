@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server'
 import {
   buildBotMainMenu,
+  buildLanguageChangedMessage,
+  buildLanguageMenu,
   buildTranslationMenu,
   buildVocabularyModeMenu,
   buildLeaderboardText,
@@ -9,6 +11,7 @@ import {
   buildQuizReviewKeyboard,
   buildQuizReviewMessage,
   buildQuizSummary,
+  buildMistakeBookText,
   buildSpeakingFeedbackMessage,
   buildSpeakingModeMenu,
   buildSpeakingPromptMessage,
@@ -31,6 +34,7 @@ import {
   toTelegramLearnerUpsert,
   toSpeakingExerciseInsert,
   type QuizSession,
+  type InterfaceLanguage,
   type SpeakingExerciseInsert,
   type SpeakingMode,
   type SpeakingPrompt,
@@ -62,6 +66,7 @@ type TelegramUpdate = {
 const questionCache = new Map<string, VocabularyQuestion>()
 const learnerStates = new Map<string, TelegramLearnerState>()
 const learnerWordSets = new Map<string, ReturnType<typeof generateVocabularySet>>()
+const learnerLanguages = new Map<string, InterfaceLanguage>()
 const quizSessions = new Map<string, QuizSession>()
 const speakingSessions = new Map<string, { prompts: SpeakingPrompt[]; currentIndex: number; scores: number[]; mode: SpeakingMode; lastMessageId?: number }>()
 
@@ -92,6 +97,18 @@ function getLearner(from?: { id?: number; username?: string; first_name?: string
   recordCheckIn(state)
   void persistLearner(state)
   return state
+}
+
+function getLearnerLanguage(telegramUserId: string): InterfaceLanguage {
+  return learnerLanguages.get(telegramUserId) ?? 'zh'
+}
+
+function setLearnerLanguage(telegramUserId: string, language: InterfaceLanguage) {
+  learnerLanguages.set(telegramUserId, language)
+}
+
+function getMainMenuForLearner(telegramUserId: string) {
+  return buildBotMainMenu(getLearnerLanguage(telegramUserId))
 }
 
 function telegramApiUrl(method: string) {
@@ -250,6 +267,108 @@ async function loadLeaderboardFromSupabase() {
     currentQuestionIndex: 0,
     lastCheckInDate: row.last_check_in_date ? String(row.last_check_in_date) : undefined,
   }))
+}
+
+async function loadMistakeStatsFromSupabase(telegramUserId: string) {
+  const fallback = learnerStates.get(telegramUserId)
+  const cfg = createServiceSupabase()
+  if (!cfg) return { vocabulary: fallback?.wrongVocabularyCount ?? 0 }
+
+  const sessionsUrl = `${cfg.url}/rest/v1/quiz_sessions?select=id,quiz_type&telegram_user_id=eq.${encodeURIComponent(telegramUserId)}`
+  const sessionsResponse = await fetch(sessionsUrl, {
+    headers: {
+      apikey: cfg.key,
+      Authorization: `Bearer ${cfg.key}`,
+    },
+  }).catch(() => null)
+
+  const stats = { vocabulary: fallback?.wrongVocabularyCount ?? 0, grammar: 0, translation: 0, reading: 0, speaking: 0 }
+  if (!sessionsResponse?.ok) return stats
+
+  const sessions = (await sessionsResponse.json().catch(() => [])) as Array<{ id?: string; quiz_type?: string }>
+  if (!sessions.length) return stats
+
+  const sessionTypeById = new Map(sessions.filter((session) => session.id).map((session) => [session.id as string, String(session.quiz_type ?? '')]))
+  const ids = [...sessionTypeById.keys()]
+  const answersUrl = `${cfg.url}/rest/v1/quiz_answers?select=quiz_session_id&correct=eq.false&quiz_session_id=in.(${ids.join(',')})`
+  const answersResponse = await fetch(answersUrl, {
+    headers: {
+      apikey: cfg.key,
+      Authorization: `Bearer ${cfg.key}`,
+    },
+  }).catch(() => null)
+
+  if (answersResponse?.ok) {
+    const answers = (await answersResponse.json().catch(() => [])) as Array<{ quiz_session_id?: string }>
+    const countedVocabulary = answers.some((answer) => sessionTypeById.get(String(answer.quiz_session_id)) === 'vocabulary')
+    stats.vocabulary = countedVocabulary ? 0 : stats.vocabulary
+    for (const answer of answers) {
+      const quizType = sessionTypeById.get(String(answer.quiz_session_id))
+      if (quizType === 'vocabulary') stats.vocabulary += 1
+      else if (quizType === 'grammar') stats.grammar += 1
+      else if (quizType === 'translation') stats.translation += 1
+      else if (quizType === 'reading') stats.reading += 1
+    }
+  }
+
+  const speakingSessionIds = ids.filter((id) => sessionTypeById.get(id) === 'speaking')
+  if (speakingSessionIds.length) {
+    const speakingUrl = `${cfg.url}/rest/v1/quiz_answers?select=id&correct=eq.false&quiz_session_id=in.(${speakingSessionIds.join(',')})`
+    const speakingResponse = await fetch(speakingUrl, {
+      headers: {
+        apikey: cfg.key,
+        Authorization: `Bearer ${cfg.key}`,
+      },
+    }).catch(() => null)
+    if (speakingResponse?.ok) {
+      const speakingAnswers = (await speakingResponse.json().catch(() => [])) as unknown[]
+      stats.speaking = speakingAnswers.length
+    }
+  }
+
+  return stats
+}
+
+async function persistCompletedQuizSession(session: QuizSession) {
+  const cfg = createServiceSupabase()
+  if (!cfg) return
+  const response = await fetch(`${cfg.url}/rest/v1/quiz_sessions?select=id`, {
+    method: 'POST',
+    headers: {
+      apikey: cfg.key,
+      Authorization: `Bearer ${cfg.key}`,
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation',
+    },
+    body: JSON.stringify({
+      telegram_user_id: session.telegramUserId,
+      quiz_type: session.quizType,
+      total_questions: session.answers.length,
+      correct_count: session.correctCount,
+      status: 'completed',
+      completed_at: new Date().toISOString(),
+    }),
+  }).catch(() => null)
+  if (!response?.ok) return
+  const rows = (await response.json().catch(() => [])) as Array<{ id?: string }>
+  const sessionId = rows[0]?.id
+  if (!sessionId) return
+  await fetch(`${cfg.url}/rest/v1/quiz_answers`, {
+    method: 'POST',
+    headers: {
+      apikey: cfg.key,
+      Authorization: `Bearer ${cfg.key}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(session.answers.map((answer) => ({
+      quiz_session_id: sessionId,
+      prompt: answer.prompt,
+      selected_answer: answer.selectedAnswer,
+      correct_answer: answer.correctAnswer,
+      correct: answer.correct,
+      explanation: answer.explanation,
+    }))),
+  }).catch(() => null)
 }
 
 async function sendMenu(chatId: number | string, menu: { text: string; buttons: { text: string; callback_data: string }[][] }) {
@@ -498,7 +617,7 @@ async function handleTextMessage(message: TelegramMessage) {
   }
 
   if (text.startsWith('/start') || mentionsBot(text)) {
-    await sendMenu(chatId, buildBotMainMenu())
+    await sendMenu(chatId, getMainMenuForLearner(learner.telegramUserId))
     return
   }
 
@@ -523,7 +642,7 @@ async function handleTextMessage(message: TelegramMessage) {
     return
   }
 
-  await sendMenu(chatId, buildBotMainMenu())
+  await sendMenu(chatId, getMainMenuForLearner(learner.telegramUserId))
 }
 
 async function handleCallback(callback: TelegramCallbackQuery) {
@@ -534,7 +653,14 @@ async function handleCallback(callback: TelegramCallbackQuery) {
   const data = callback.data
   const learner = getLearner(callback.from)
 
-  if (data === 'menu:main') return sendMenu(chatId, buildBotMainMenu())
+  if (data === 'menu:main') return sendMenu(chatId, getMainMenuForLearner(learner.telegramUserId))
+  if (data === 'menu:language') return sendMenu(chatId, buildLanguageMenu())
+  if (data.startsWith('lang:')) {
+    const language: InterfaceLanguage = data.endsWith(':en') ? 'en' : 'zh'
+    setLearnerLanguage(learner.telegramUserId, language)
+    await callTelegram('sendMessage', { chat_id: chatId, text: buildLanguageChangedMessage(language) })
+    return sendMenu(chatId, getMainMenuForLearner(learner.telegramUserId))
+  }
   if (data === 'menu:vocab') return sendMenu(chatId, buildVocabularyModeMenu())
   if (data === 'menu:translate') return sendMenu(chatId, buildTranslationMenu())
 
@@ -550,7 +676,8 @@ async function handleCallback(callback: TelegramCallbackQuery) {
   }
 
   if (data === 'menu:mistakes') {
-    return callTelegram('sendMessage', { chat_id: chatId, text: `错题本：${learner.displayName}\n当前词汇错题：${learner.wrongVocabularyCount}\n继续点击“词汇测试 → 错题复习”复习。` })
+    const stats = await loadMistakeStatsFromSupabase(learner.telegramUserId)
+    return callTelegram('sendMessage', { chat_id: chatId, text: buildMistakeBookText(learner.displayName, stats) })
   }
 
   if (data === 'menu:leaderboard') {
@@ -623,6 +750,7 @@ async function handleCallback(callback: TelegramCallbackQuery) {
     if (!session) return callTelegram('sendMessage', { chat_id: chatId, text: '题目已过期，请重新开始测试。' })
     if (session.currentIndex >= session.questions.length) {
       quizSessions.delete(sessionId)
+      void persistCompletedQuizSession(session)
       return callTelegram('editMessageText', {
         chat_id: chatId,
         message_id: callback.message?.message_id,

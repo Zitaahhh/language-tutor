@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildBotMainMenu,
+  buildLanguageChangedMessage,
+  buildLanguageMenu,
   buildVocabularyModeMenu,
   buildVocabularyQuestion,
   evaluateVocabularyAnswer,
@@ -16,6 +18,7 @@ import {
   createQuizSession,
   recordQuizAnswer,
   buildQuizSummary,
+  buildMistakeBookText,
   getNextQuizQuestion,
   buildQuizQuestionMessage,
   buildQuizAnswerKeyboard,
@@ -35,8 +38,10 @@ import {
 } from './spanish-coach-bot'
 
 describe('AI Spanish Coach bot flows', () => {
-  it('builds the main menu with the four requested learning modes', () => {
+  it('builds the main menu with the requested learning modes and language switch', () => {
     const menu = buildBotMainMenu()
+    const englishMenu = buildBotMainMenu('en')
+    const languageMenu = buildLanguageMenu()
 
     expect(menu.text).toContain('AI Spanish Coach')
     expect(menu.buttons.flat().map((button) => button.text)).toEqual([
@@ -47,7 +52,12 @@ describe('AI Spanish Coach bot flows', () => {
       '学习进度',
       '错题本',
       '排行榜',
+      '🌐 中文 / English',
     ])
+    expect(englishMenu.text).toContain('Choose a practice mode')
+    expect(englishMenu.buttons.flat().map((button) => button.text)).toContain('Speaking Test')
+    expect(languageMenu.buttons.flat().map((button) => button.callback_data)).toContain('lang:en')
+    expect(buildLanguageChangedMessage('en')).toContain('English')
   })
 
   it('builds vocabulary sub-menu for new, old, and mistake review modes', () => {
@@ -155,6 +165,15 @@ describe('AI Spanish Coach bot flows', () => {
       check_in_days: 3,
       last_check_in_date: '2026-06-22',
     })
+  })
+
+  it('builds a mistake book summary across quiz types', () => {
+    const text = buildMistakeBookText('@zita', { vocabulary: 2, grammar: 4, speaking: 1 })
+
+    expect(text).toContain('当前错题总数：7')
+    expect(text).toContain('词汇错题：2')
+    expect(text).toContain('语法错题：4')
+    expect(text).toContain('口语复习项：1')
   })
 
   it('runs any quiz type for exactly 20 answers then returns a result summary', () => {
