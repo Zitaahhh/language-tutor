@@ -518,6 +518,33 @@ export function evaluateSpokenAttempt(prompt: SpeakingPrompt, transcript: string
   }
 }
 
+export function findBestSpeakingPromptForTranscript(
+  transcript: string,
+  prompts = generateSpeakingPromptSet('read_sentence', 'A1'),
+): { prompt: SpeakingPrompt; index: number; score: number } | null {
+  const spokenTokens = new Set(normalizeSpeech(transcript).split(' ').filter(Boolean))
+  if (!spokenTokens.size) return null
+
+  let bestPrompt: SpeakingPrompt | null = null
+  let bestIndex = -1
+  let bestScore = 0
+
+  for (let index = 0; index < prompts.length; index += 1) {
+    const prompt = prompts[index]
+    const targetTokens = normalizeSpeech(prompt.targetAnswer).split(' ').filter(Boolean)
+    if (!targetTokens.length) continue
+    const overlap = targetTokens.filter((token) => spokenTokens.has(token)).length
+    const score = overlap / targetTokens.length
+    if (score > bestScore) {
+      bestPrompt = prompt
+      bestIndex = index
+      bestScore = score
+    }
+  }
+
+  return bestPrompt && bestScore >= 0.25 ? { prompt: bestPrompt, index: bestIndex, score: bestScore } : null
+}
+
 function buildSpeakingGuidance(prompt: SpeakingPrompt, score: number, missingWords: string[]) {
   if (!prompt.targetAnswer.trim()) return '没有标准答案，请重新开始本题。'
   if (score >= 90) return `很好！语音识别和目标句高度一致。${prompt.guide}`

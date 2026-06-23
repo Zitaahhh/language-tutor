@@ -16,6 +16,7 @@ import {
   createQuizSession,
   createTelegramLearnerState,
   evaluateSpokenAttempt,
+  findBestSpeakingPromptForTranscript,
   generateGrammarQuestion,
   generateGrammarQuestionSet,
   generateSpeakingPromptSet,
@@ -403,8 +404,9 @@ async function handleTextMessage(message: TelegramMessage) {
       persistentSession = await loadPersistentSpeakingSession(learner.telegramUserId)
     }
     const activePrompt = session?.prompts[session.currentIndex]
-    const prompt = activePrompt ?? fallbackSpeakingPrompt
     const transcript = await transcribeTelegramVoice(message.voice.file_id)
+    const fallbackMatch = activePrompt ? null : findBestSpeakingPromptForTranscript(transcript)
+    const prompt = activePrompt ?? fallbackMatch?.prompt ?? fallbackSpeakingPrompt
     const feedback = evaluateSpokenAttempt(prompt, transcript)
     session?.scores.push(feedback.score)
     void persistSpeakingExercise(toSpeakingExerciseInsert(learner.telegramUserId, prompt, feedback))
@@ -412,8 +414,12 @@ async function handleTextMessage(message: TelegramMessage) {
     await callTelegram('sendMessage', {
       chat_id: chatId,
       text: [
-        activePrompt ? '' : '没有检测到正在进行的口语测试，我先按 Day 1 默认句子给你纠正：',
-        buildSpeakingFeedbackMessage(prompt, feedback, session?.currentIndex ?? 0, session?.prompts.length ?? 1),
+        activePrompt
+          ? ''
+          : fallbackMatch
+            ? `没有检测到正在进行的口语测试；我根据你的语音自动匹配到第 ${fallbackMatch.index + 1} 题来纠正：`
+            : '没有检测到正在进行的口语测试，也没有匹配到相近题目；我先按 Day 1 默认句子给你纠正：',
+        buildSpeakingFeedbackMessage(prompt, feedback, activePrompt ? session?.currentIndex ?? 0 : fallbackMatch?.index ?? 0, session?.prompts.length ?? 1),
       ].filter((line) => line.length > 0).join('\n\n'),
     })
     await sendPronunciationAudio(chatId, prompt.targetAnswer)

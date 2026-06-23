@@ -25,6 +25,7 @@ import {
   buildSpeakingPromptMessage,
   buildSpeakingFeedbackMessage,
   evaluateSpokenAttempt,
+  findBestSpeakingPromptForTranscript,
   generateSpeakingPromptSet,
   generateGrammarQuestionSet,
   generateTranslationQuestionSet,
@@ -242,5 +243,13 @@ describe('AI Spanish Coach bot flows', () => {
     expect(feedback.needsReview).toBe(true)
     expect(feedback.missingWords.length).toBeGreaterThan(0)
     expect(buildSpeakingFeedbackMessage(prompt, feedback, 0, 20)).toContain('已加入口语复习/错题队列')
+  })
+
+  it('matches a transcript back to the closest speaking prompt when serverless state is missing', () => {
+    const match = findBestSpeakingPromptForTranscript('Mi viaje a España playing clay play')
+
+    expect(match).not.toBeNull()
+    expect(match?.index).toBe(0)
+    expect(match?.prompt.targetAnswer).toContain('Mi viaje a España')
   })
 })
