@@ -69,6 +69,7 @@ const learnerWordSets = new Map<string, ReturnType<typeof generateVocabularySet>
 const learnerLanguages = new Map<string, InterfaceLanguage>()
 const quizSessions = new Map<string, QuizSession>()
 const speakingSessions = new Map<string, { prompts: SpeakingPrompt[]; currentIndex: number; scores: number[]; mode: SpeakingMode; lastMessageId?: number }>()
+const learnerLanguageLoadPromises = new Map<string, Promise<InterfaceLanguage | null>>()
 
 const fallbackSpeakingPrompt: SpeakingPrompt = {
   mode: 'read_sentence',
@@ -95,16 +96,32 @@ function getLearner(from?: { id?: number; username?: string; first_name?: string
   }
   state.displayName = displayName
   recordCheckIn(state)
-  void persistLearner(state)
   return state
 }
 
 function getLearnerLanguage(telegramUserId: string): InterfaceLanguage {
-  return learnerLanguages.get(telegramUserId) ?? 'zh'
+  return learnerStates.get(telegramUserId)?.interfaceLanguage ?? learnerLanguages.get(telegramUserId) ?? 'zh'
 }
 
-function setLearnerLanguage(telegramUserId: string, language: InterfaceLanguage) {
+function setLearnerLanguage(telegramUserId: string, language: InterfaceLanguage, persist = true) {
   learnerLanguages.set(telegramUserId, language)
+  const state = learnerStates.get(telegramUserId)
+  if (state) {
+    state.interfaceLanguage = language
+    if (persist) void persistLearner(state)
+  }
+}
+
+async function loadLearnerLanguage(telegramUserId: string) {
+  if (learnerLanguages.has(telegramUserId)) return learnerLanguages.get(telegramUserId) ?? null
+  let promise = learnerLanguageLoadPromises.get(telegramUserId)
+  if (!promise) {
+    promise = loadLearnerLanguageFromSupabase(telegramUserId).finally(() => learnerLanguageLoadPromises.delete(telegramUserId))
+    learnerLanguageLoadPromises.set(telegramUserId, promise)
+  }
+  const language = await promise
+  if (language) setLearnerLanguage(telegramUserId, language, false)
+  return language
 }
 
 function getMainMenuForLearner(telegramUserId: string) {
@@ -150,6 +167,20 @@ async function persistLearner(learner: TelegramLearnerState) {
     },
     body: JSON.stringify(toTelegramLearnerUpsert(learner)),
   }).catch(() => null)
+}
+
+async function loadLearnerLanguageFromSupabase(telegramUserId: string) {
+  const cfg = createServiceSupabase()
+  if (!cfg) return null
+  const response = await fetch(`${cfg.url}/rest/v1/telegram_learners?select=interface_language&telegram_user_id=eq.${encodeURIComponent(telegramUserId)}&limit=1`, {
+    headers: {
+      apikey: cfg.key,
+      Authorization: `Bearer ${cfg.key}`,
+    },
+  }).catch(() => null)
+  if (!response?.ok) return null
+  const rows = (await response.json().catch(() => [])) as Array<{ interface_language?: string }>
+  return rows[0]?.interface_language === 'en' ? 'en' : rows[0]?.interface_language === 'zh' ? 'zh' : null
 }
 
 async function persistSpeakingExercise(exercise: SpeakingExerciseInsert) {
@@ -250,7 +281,7 @@ async function persistSpeakingAnswer(sessionId: string, prompt: SpeakingPrompt, 
 async function loadLeaderboardFromSupabase() {
   const cfg = createServiceSupabase()
   if (!cfg) return [...learnerStates.values()]
-  const response = await fetch(`${cfg.url}/rest/v1/telegram_learners?select=telegram_user_id,display_name,learned_vocabulary_count,wrong_vocabulary_count,check_in_days,last_check_in_date&order=learned_vocabulary_count.desc,wrong_vocabulary_count.asc,check_in_days.desc&limit=20`, {
+  const response = await fetch(`${cfg.url}/rest/v1/telegram_learners?select=telegram_user_id,display_name,interface_language,learned_vocabulary_count,wrong_vocabulary_count,check_in_days,last_check_in_date&order=learned_vocabulary_count.desc,wrong_vocabulary_count.asc,check_in_days.desc&limit=20`, {
     headers: {
       apikey: cfg.key,
       Authorization: `Bearer ${cfg.key}`,
@@ -258,9 +289,10 @@ async function loadLeaderboardFromSupabase() {
   }).catch(() => null)
   if (!response?.ok) return [...learnerStates.values()]
   const rows = (await response.json().catch(() => [])) as Array<Record<string, unknown>>
-  return rows.map((row) => ({
+  return rows.map((row): TelegramLearnerState => ({
     telegramUserId: String(row.telegram_user_id ?? ''),
     displayName: String(row.display_name ?? row.telegram_user_id ?? ''),
+    interfaceLanguage: row.interface_language === 'en' ? 'en' : 'zh',
     learnedVocabularyCount: Number(row.learned_vocabulary_count ?? 0),
     wrongVocabularyCount: Number(row.wrong_vocabulary_count ?? 0),
     checkInDays: Number(row.check_in_days ?? 0),
@@ -535,6 +567,8 @@ async function handleTextMessage(message: TelegramMessage) {
   if (!chatId) return
   const text = message.text ?? ''
   const learner = getLearner(message.from)
+  await loadLearnerLanguage(learner.telegramUserId)
+  void persistLearner(learner)
 
   if (message.voice) {
     let session = speakingSessions.get(learner.telegramUserId)
@@ -669,6 +703,7 @@ async function handleCallback(callback: TelegramCallbackQuery) {
 
   const data = callback.data
   const learner = getLearner(callback.from)
+  await loadLearnerLanguage(learner.telegramUserId)
   const language = getLearnerLanguage(learner.telegramUserId)
 
   if (data === 'menu:main') return sendMenu(chatId, getMainMenuForLearner(learner.telegramUserId))

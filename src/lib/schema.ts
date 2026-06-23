@@ -64,6 +64,22 @@ create table if not exists public.telegram_archives (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.telegram_learners (
+  id uuid primary key default gen_random_uuid(),
+  telegram_user_id text not null unique,
+  display_name text not null,
+  learned_vocabulary_count integer not null default 0,
+  wrong_vocabulary_count integer not null default 0,
+  check_in_days integer not null default 0,
+  interface_language text not null default 'zh' check (interface_language in ('zh','en')),
+  last_check_in_date date,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.telegram_learners
+add column if not exists interface_language text not null default 'zh' check (interface_language in ('zh','en'));
+
 create or replace function public.set_updated_at()
 returns trigger language plpgsql as $$
 begin
@@ -102,6 +118,7 @@ alter table public.study_plans enable row level security;
 alter table public.daily_tasks enable row level security;
 alter table public.mistakes enable row level security;
 alter table public.telegram_archives enable row level security;
+alter table public.telegram_learners enable row level security;
 
 create policy if not exists "profiles_select_own" on public.profiles for select using (auth.uid() = id);
 create policy if not exists "profiles_update_own" on public.profiles for update using (auth.uid() = id) with check (auth.uid() = id);

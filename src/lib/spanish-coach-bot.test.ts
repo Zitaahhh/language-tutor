@@ -172,6 +172,19 @@ describe('AI Spanish Coach bot flows', () => {
       wrong_vocabulary_count: 2,
       check_in_days: 3,
       last_check_in_date: '2026-06-22',
+      interface_language: 'zh',
+    })
+  })
+
+  it('persists the selected Telegram interface language with learner stats', () => {
+    const learner = {
+      ...createTelegramLearnerState('43', '@english'),
+      interfaceLanguage: 'en' as const,
+    }
+
+    expect(toTelegramLearnerUpsert(learner)).toMatchObject({
+      telegram_user_id: '43',
+      interface_language: 'en',
     })
   })
 

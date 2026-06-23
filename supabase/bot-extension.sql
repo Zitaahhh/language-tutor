@@ -101,10 +101,14 @@ create table if not exists public.telegram_learners (
   learned_vocabulary_count integer not null default 0,
   wrong_vocabulary_count integer not null default 0,
   check_in_days integer not null default 0,
+  interface_language text not null default 'zh' check (interface_language in ('zh','en')),
   last_check_in_date date,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+
+alter table public.telegram_learners
+add column if not exists interface_language text not null default 'zh' check (interface_language in ('zh','en'));
 
 alter table public.vocabulary_items enable row level security;
 alter table public.user_vocabulary_progress enable row level security;

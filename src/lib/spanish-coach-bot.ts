@@ -42,6 +42,7 @@ export type ReadingPrompt = {
 export type TelegramLearnerState = {
   telegramUserId: string
   displayName: string
+  interfaceLanguage: InterfaceLanguage
   learnedVocabularyCount: number
   wrongVocabularyCount: number
   checkInDays: number
@@ -303,6 +304,7 @@ export function createTelegramLearnerState(telegramUserId: string, displayName: 
   return {
     telegramUserId,
     displayName,
+    interfaceLanguage: 'zh',
     learnedVocabularyCount: 0,
     wrongVocabularyCount: 0,
     checkInDays: 0,
@@ -354,6 +356,7 @@ export function toTelegramLearnerUpsert(learner: TelegramLearnerState) {
   return {
     telegram_user_id: learner.telegramUserId,
     display_name: learner.displayName,
+    interface_language: learner.interfaceLanguage,
     learned_vocabulary_count: learner.learnedVocabularyCount,
     wrong_vocabulary_count: learner.wrongVocabularyCount,
     check_in_days: learner.checkInDays,
