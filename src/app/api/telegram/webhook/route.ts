@@ -71,6 +71,14 @@ const fallbackSpeakingPrompt: SpeakingPrompt = {
   guide: '注意 Hola 的 h 不发音；llamo 的 ll 按拉美通用音接近 y/ʝ；每个元音 a/e/i/o/u 要清楚。',
 }
 
+type PersistentSpeakingSession = {
+  id: string
+  mode: SpeakingMode
+  total_questions: number
+  correct_count: number
+  status: string
+}
+
 function getLearner(from?: { id?: number; username?: string; first_name?: string }) {
   const telegramUserId = String(from?.id ?? 'anonymous')
   const displayName = from?.username ? `@${from.username}` : from?.first_name || telegramUserId
@@ -137,6 +145,87 @@ async function persistSpeakingExercise(exercise: SpeakingExerciseInsert) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(exercise),
+  }).catch(() => null)
+}
+
+async function createPersistentSpeakingSession(telegramUserId: string, mode: SpeakingMode, totalQuestions = 20) {
+  const cfg = createServiceSupabase()
+  if (!cfg) return null
+  const response = await fetch(`${cfg.url}/rest/v1/quiz_sessions?select=id,mode,total_questions,correct_count,status`, {
+    method: 'POST',
+    headers: {
+      apikey: cfg.key,
+      Authorization: `Bearer ${cfg.key}`,
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation',
+    },
+    body: JSON.stringify({
+      telegram_user_id: telegramUserId,
+      quiz_type: 'speaking',
+      mode,
+      total_questions: totalQuestions,
+      correct_count: 0,
+      status: 'active',
+    }),
+  }).catch(() => null)
+  if (!response?.ok) return null
+  const rows = (await response.json().catch(() => [])) as PersistentSpeakingSession[]
+  return rows[0] ?? null
+}
+
+async function loadPersistentSpeakingSession(telegramUserId: string) {
+  const cfg = createServiceSupabase()
+  if (!cfg) return null
+  const response = await fetch(
+    `${cfg.url}/rest/v1/quiz_sessions?select=id,mode,total_questions,correct_count,status&telegram_user_id=eq.${encodeURIComponent(telegramUserId)}&quiz_type=eq.speaking&status=eq.active&order=created_at.desc&limit=1`,
+    {
+      headers: {
+        apikey: cfg.key,
+        Authorization: `Bearer ${cfg.key}`,
+      },
+    },
+  ).catch(() => null)
+  if (!response?.ok) return null
+  const rows = (await response.json().catch(() => [])) as PersistentSpeakingSession[]
+  return rows[0] ?? null
+}
+
+async function updatePersistentSpeakingSession(sessionId: string, correctCount: number, completed: boolean) {
+  const cfg = createServiceSupabase()
+  if (!cfg) return
+  await fetch(`${cfg.url}/rest/v1/quiz_sessions?id=eq.${encodeURIComponent(sessionId)}`, {
+    method: 'PATCH',
+    headers: {
+      apikey: cfg.key,
+      Authorization: `Bearer ${cfg.key}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      correct_count: correctCount,
+      status: completed ? 'completed' : 'active',
+      completed_at: completed ? new Date().toISOString() : null,
+    }),
+  }).catch(() => null)
+}
+
+async function persistSpeakingAnswer(sessionId: string, prompt: SpeakingPrompt, feedback: ReturnType<typeof evaluateSpokenAttempt>) {
+  const cfg = createServiceSupabase()
+  if (!cfg) return
+  await fetch(`${cfg.url}/rest/v1/quiz_answers`, {
+    method: 'POST',
+    headers: {
+      apikey: cfg.key,
+      Authorization: `Bearer ${cfg.key}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      quiz_session_id: sessionId,
+      prompt: prompt.prompt,
+      selected_answer: feedback.transcript,
+      correct_answer: prompt.targetAnswer,
+      correct: feedback.score >= 80,
+      explanation: feedback.guidance,
+    }),
   }).catch(() => null)
 }
 
@@ -295,13 +384,31 @@ async function handleTextMessage(message: TelegramMessage) {
   const learner = getLearner(message.from)
 
   if (message.voice) {
-    const session = speakingSessions.get(learner.telegramUserId)
+    let session = speakingSessions.get(learner.telegramUserId)
+    let persistentSession: PersistentSpeakingSession | null = null
+    if (!session) {
+      persistentSession = await loadPersistentSpeakingSession(learner.telegramUserId)
+      if (persistentSession) {
+        const mode = persistentSession.mode === 'answer_question' ? 'answer_question' : 'read_sentence'
+        const prompts = generateSpeakingPromptSet(mode, 'A1')
+        session = {
+          prompts,
+          currentIndex: Math.min(Number(persistentSession.correct_count ?? 0), prompts.length - 1),
+          scores: [],
+          mode,
+        }
+        speakingSessions.set(learner.telegramUserId, session)
+      }
+    } else {
+      persistentSession = await loadPersistentSpeakingSession(learner.telegramUserId)
+    }
     const activePrompt = session?.prompts[session.currentIndex]
     const prompt = activePrompt ?? fallbackSpeakingPrompt
     const transcript = await transcribeTelegramVoice(message.voice.file_id)
     const feedback = evaluateSpokenAttempt(prompt, transcript)
     session?.scores.push(feedback.score)
     void persistSpeakingExercise(toSpeakingExerciseInsert(learner.telegramUserId, prompt, feedback))
+    if (persistentSession?.id) void persistSpeakingAnswer(persistentSession.id, prompt, feedback)
     await callTelegram('sendMessage', {
       chat_id: chatId,
       text: [
@@ -312,6 +419,8 @@ async function handleTextMessage(message: TelegramMessage) {
     await sendPronunciationAudio(chatId, prompt.targetAnswer)
     if (session && activePrompt) {
       session.currentIndex += 1
+      const completed = session.currentIndex >= session.prompts.length
+      if (persistentSession?.id) void updatePersistentSpeakingSession(persistentSession.id, session.currentIndex, completed)
       await sendSpeakingPrompt(chatId, learner.telegramUserId)
     }
     return
@@ -497,12 +606,14 @@ async function handleCallback(callback: TelegramCallbackQuery) {
 
   if (data.startsWith('speaking:')) {
     const mode = data.split(':')[1] === 'answer_question' ? 'answer_question' : 'read_sentence'
+    const prompts = generateSpeakingPromptSet(mode, 'A1')
     speakingSessions.set(learner.telegramUserId, {
-      prompts: generateSpeakingPromptSet(mode, 'A1'),
+      prompts,
       currentIndex: 0,
       scores: [],
       mode,
     })
+    await createPersistentSpeakingSession(learner.telegramUserId, mode, prompts.length)
     return sendSpeakingPrompt(chatId, learner.telegramUserId)
   }
 
