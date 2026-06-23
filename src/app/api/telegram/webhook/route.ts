@@ -11,6 +11,7 @@ import {
   buildQuizReviewKeyboard,
   buildQuizReviewMessage,
   buildQuizSummary,
+  buildStoppedQuizArchiveMessage,
   buildMistakeBookText,
   buildSpeakingFeedbackMessage,
   buildSpeakingModeMenu,
@@ -361,7 +362,7 @@ async function loadMistakeStatsFromSupabase(telegramUserId: string) {
   return stats
 }
 
-async function persistCompletedQuizSession(session: QuizSession) {
+async function persistCompletedQuizSession(session: QuizSession, status: 'completed' | 'stopped' = 'completed') {
   const cfg = createServiceSupabase()
   if (!cfg) return
   const response = await fetch(`${cfg.url}/rest/v1/quiz_sessions?select=id`, {
@@ -377,7 +378,7 @@ async function persistCompletedQuizSession(session: QuizSession) {
       quiz_type: session.quizType,
       total_questions: session.answers.length,
       correct_count: session.correctCount,
-      status: 'completed',
+      status,
       completed_at: new Date().toISOString(),
     }),
   }).catch(() => null)
@@ -437,6 +438,34 @@ async function editQuizQuestion(chatId: number | string, messageId: number | und
 async function startQuiz(chatId: number | string, session: QuizSession) {
   quizSessions.set(session.id, session)
   return sendQuizQuestion(chatId, session)
+}
+
+async function stopActiveTests(chatId: number | string, telegramUserId: string, language: InterfaceLanguage) {
+  const activeQuiz = [...quizSessions.values()].find((session) => session.telegramUserId === telegramUserId)
+  const activeSpeaking = speakingSessions.get(telegramUserId)
+
+  if (!activeQuiz && !activeSpeaking) {
+    return callTelegram('sendMessage', {
+      chat_id: chatId,
+      text: language === 'en' ? 'No active test to stop.' : '当前没有正在进行的测试。',
+    })
+  }
+
+  if (activeQuiz) {
+    const archive = buildStoppedQuizArchiveMessage(activeQuiz, language)
+    quizSessions.delete(activeQuiz.id)
+    void persistCompletedQuizSession(activeQuiz, 'stopped')
+    return callTelegram('sendMessage', {
+      chat_id: chatId,
+      text: archive.message,
+    })
+  }
+
+  speakingSessions.delete(telegramUserId)
+  return callTelegram('sendMessage', {
+    chat_id: chatId,
+    text: language === 'en' ? 'Speaking test stopped. Speaking mistakes already recorded during scoring.' : '已停止口语测试。口语错题会在评分时自动归档。',
+  })
 }
 
 async function sendSpeakingPrompt(chatId: number | string, learnerId: string) {
@@ -668,6 +697,11 @@ async function handleTextMessage(message: TelegramMessage) {
 
   if (text.startsWith('/start') || mentionsBot(text)) {
     await sendMenu(chatId, getMainMenuForLearner(learner.telegramUserId))
+    return
+  }
+
+  if (text.startsWith('/stop')) {
+    await stopActiveTests(chatId, learner.telegramUserId, getLearnerLanguage(learner.telegramUserId))
     return
   }
 

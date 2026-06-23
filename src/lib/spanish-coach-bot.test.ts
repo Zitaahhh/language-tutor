@@ -18,6 +18,7 @@ import {
   createQuizSession,
   recordQuizAnswer,
   buildQuizSummary,
+  buildStoppedQuizArchiveMessage,
   buildMistakeBookText,
   getNextQuizQuestion,
   buildQuizQuestionMessage,
@@ -211,6 +212,34 @@ describe('AI Spanish Coach bot flows', () => {
     expect(session.answers).toHaveLength(20)
     expect(session.correctCount).toBe(10)
     expect(buildQuizSummary(session)).toContain('正确率：50%')
+  })
+
+  it('builds a stop message and archives only wrong answers from an unfinished quiz', () => {
+    const session = createQuizSession('telegram-stop-1', 'grammar', generateGrammarQuestionSet('A1'), '语法测试')
+    const first = getNextQuizQuestion(session)!
+    recordQuizAnswer(session, first.options.find((option) => option !== first.correctAnswer)!)
+    const second = getNextQuizQuestion(session)!
+    recordQuizAnswer(session, second.correctAnswer)
+
+    const archive = buildStoppedQuizArchiveMessage(session)
+
+    expect(archive.wrongAnswers).toHaveLength(1)
+    expect(archive.message).toContain('已停止测试')
+    expect(archive.message).toContain('已归档错题：1')
+    expect(archive.message).toContain('正确答案')
+  })
+
+  it('localizes stopped quiz archive messages in English', () => {
+    const session = createQuizSession('telegram-stop-2', 'translation', generateTranslationQuestionSet('es-zh', 'en'), 'Spanish → English')
+    const first = getNextQuizQuestion(session)!
+    recordQuizAnswer(session, first.options.find((option) => option !== first.correctAnswer)!)
+
+    const archive = buildStoppedQuizArchiveMessage(session, 'en')
+
+    expect(archive.wrongAnswers).toHaveLength(1)
+    expect(archive.message).toContain('Test stopped')
+    expect(archive.message).toContain('Archived mistakes: 1')
+    expect(archive.message).toContain('Correct answer')
   })
 
   it('applies English to every quiz question, review navigation, and final feedback', () => {

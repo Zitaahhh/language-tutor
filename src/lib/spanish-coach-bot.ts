@@ -455,6 +455,31 @@ export function buildQuizSummary(session: QuizSession, language: InterfaceLangua
     : [`🎉 ${session.title ?? '本轮'}${total}题完成`, `正确：${session.correctCount}/${total}`, `正确率：${accuracy}%`, '', '答题结果：', ...rows].join('\n')
 }
 
+export function buildStoppedQuizArchiveMessage(session: QuizSession, language: InterfaceLanguage = 'zh') {
+  const wrongAnswers = session.answers.filter((answer) => !answer.correct)
+  const rows = wrongAnswers.map((answer, index) =>
+    language === 'en'
+      ? `${index + 1}. ${answer.prompt.replace(/\n/g, ' ')}\nYour answer: ${answer.selectedAnswer}\nCorrect answer: ${answer.correctAnswer}${answer.explanation ? `\nExplanation: ${answer.explanation}` : ''}`
+      : `${index + 1}. ${answer.prompt.replace(/\n/g, ' ')}\n你的答案：${answer.selectedAnswer}\n正确答案：${answer.correctAnswer}${answer.explanation ? `\n解析：${answer.explanation}` : ''}`,
+  )
+  const message = language === 'en'
+    ? [
+        `⏹ Test stopped: ${session.title ?? getQuizTypeTitle(session.quizType, language)}`,
+        `Answered: ${session.answers.length}/${session.questions.length}`,
+        `Archived mistakes: ${wrongAnswers.length}`,
+        '',
+        wrongAnswers.length ? 'Mistakes archived:' : 'No mistakes to archive.',
+      ]
+    : [
+        `⏹ 已停止测试：${session.title ?? getQuizTypeTitle(session.quizType, language)}`,
+        `已答：${session.answers.length}/${session.questions.length}`,
+        `已归档错题：${wrongAnswers.length}`,
+        '',
+        wrongAnswers.length ? '已归档错题：' : '没有需要归档的错题。',
+      ]
+  return { wrongAnswers, message: [...message.filter((line) => line !== 'MIST'), ...rows].join('\n') }
+}
+
 export function buildMistakeBookText(displayName: string, stats: Partial<MistakeStats> = {}, language: InterfaceLanguage = 'zh') {
   const merged = { ...emptyMistakeStats, ...stats }
   const total = merged.vocabulary + merged.grammar + merged.translation + merged.reading + merged.speaking
