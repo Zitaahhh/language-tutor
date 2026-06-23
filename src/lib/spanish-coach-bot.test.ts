@@ -200,6 +200,29 @@ describe('AI Spanish Coach bot flows', () => {
     expect(buildQuizSummary(session)).toContain('正确率：50%')
   })
 
+  it('applies English to every quiz question, review navigation, and final feedback', () => {
+    const grammarQuestions = generateGrammarQuestionSet('A1', 'en')
+    const grammarSession = createQuizSession('telegram-en-1', 'grammar', grammarQuestions, 'Grammar Quiz')
+    const firstGrammar = getNextQuizQuestion(grammarSession)!
+    expect(buildQuizQuestionMessage(grammarSession, firstGrammar, 'en')).toContain('Question 1/20')
+    recordQuizAnswer(grammarSession, firstGrammar.options.find((option) => option !== firstGrammar.correctAnswer)!)
+
+    expect(buildQuizQuestionMessage(grammarSession, firstGrammar, 'en')).toContain('Choose the correct answer')
+    expect(buildQuizReviewMessage(grammarSession, 0, 'en')).toContain('Correct answer')
+    expect(buildQuizReviewMessage(grammarSession, 0, 'en')).toContain('Key point: Location uses estar')
+    expect(buildQuizReviewKeyboard(grammarSession, 0, 'en').flat().map((button) => button.text)).toEqual(['Previous', 'Next'])
+
+    const translationSession = createQuizSession('telegram-en-2', 'translation', generateTranslationQuestionSet('es-zh', 'en'), 'Spanish → English')
+    const firstTranslation = getNextQuizQuestion(translationSession)!
+    recordQuizAnswer(translationSession, firstTranslation.correctAnswer)
+
+    expect(firstTranslation.prompt).toContain('Choose the correct English meaning')
+    expect(firstTranslation.correctAnswer).toBe('My trip to Spain was incredible.')
+    expect(buildQuizSummary(translationSession, 'en')).toContain('Correct: 1/1')
+    expect(buildQuizSummary(translationSession, 'en')).toContain('Results:')
+    expect(buildQuizSummary(translationSession, 'en')).not.toMatch(/[\u4e00-\u9fff]/)
+  })
+
   it('builds 20-question vocabulary and grammar quiz sets with question numbering', () => {
     const vocabQuestions = generateVocabularyQuestionSet('new', 'A1')
     const grammarQuestions = generateGrammarQuestionSet('A1')

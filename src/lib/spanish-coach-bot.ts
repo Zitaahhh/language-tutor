@@ -76,6 +76,41 @@ const a1Vocabulary: VocabularyItem[] = [
   ['pan', '面包', 'Compro pan cada mañana.', '我每天早上买面包。'],
 ].map(([spanish, meaningZh, exampleEs, exampleZh]) => ({ spanish, meaningZh, exampleEs, exampleZh, level: 'A1' }))
 
+const vocabularyEnglish: Record<string, { meaning: string; example: string }> = {
+  viaje: { meaning: 'trip', example: 'My trip to Spain was incredible.' },
+  calle: { meaning: 'street', example: 'The street is very pretty.' },
+  agua: { meaning: 'water', example: 'I want a glass of water.' },
+  café: { meaning: 'coffee', example: 'I would like a coffee, please.' },
+  azúcar: { meaning: 'sugar', example: 'I prefer coffee without sugar.' },
+  baño: { meaning: 'bathroom', example: 'Where is the bathroom?' },
+  estación: { meaning: 'station', example: 'The station is nearby.' },
+  tren: { meaning: 'train', example: 'The train leaves at eight.' },
+  comida: { meaning: 'food', example: 'The food is delicious.' },
+  cuenta: { meaning: 'bill/check', example: 'The bill, please.' },
+  mañana: { meaning: 'tomorrow/morning', example: 'See you tomorrow.' },
+  ayer: { meaning: 'yesterday', example: 'Yesterday I studied Spanish.' },
+  hoy: { meaning: 'today', example: 'Today I have class.' },
+  tienda: { meaning: 'store', example: 'The store is open.' },
+  precio: { meaning: 'price', example: 'What is the price?' },
+  amigo: { meaning: 'friend', example: 'My friend speaks Spanish.' },
+  familia: { meaning: 'family', example: 'My family lives in China.' },
+  trabajo: { meaning: 'work/job', example: 'I have a lot of work.' },
+  escuela: { meaning: 'school', example: 'The school is big.' },
+  tiempo: { meaning: 'time/weather', example: 'I do not have time.' },
+  libro: { meaning: 'book', example: 'I read a book in Spanish.' },
+  mesa: { meaning: 'table', example: 'The book is on the table.' },
+  leche: { meaning: 'milk', example: 'I want coffee with milk.' },
+  pan: { meaning: 'bread', example: 'I buy bread every morning.' },
+}
+
+function meaningFor(item: VocabularyItem, language: InterfaceLanguage = 'zh') {
+  return language === 'en' ? vocabularyEnglish[item.spanish]?.meaning ?? item.meaningZh : item.meaningZh
+}
+
+function exampleFor(item: VocabularyItem, language: InterfaceLanguage = 'zh') {
+  return language === 'en' ? vocabularyEnglish[item.spanish]?.example ?? item.exampleZh : item.exampleZh
+}
+
 export function buildBotMainMenu(language: InterfaceLanguage = 'zh'): CoachMenu {
   if (language === 'en') {
     return {
@@ -167,29 +202,36 @@ export function generateVocabularySet(mode: VocabMode, level = 'A1'): Vocabulary
   }))
 }
 
-export function buildVocabularyQuestion(words: VocabularyItem[], index: number): VocabularyQuestion {
+export function buildVocabularyQuestion(words: VocabularyItem[], index: number, language: InterfaceLanguage = 'zh'): VocabularyQuestion {
   const word = words[index % words.length]
-  const distractors = a1Vocabulary.filter((item) => item.meaningZh !== word.meaningZh).slice(index + 1, index + 4)
-  const fallback = a1Vocabulary.filter((item) => item.meaningZh !== word.meaningZh).slice(0, 4)
-  const options = [word.meaningZh, ...[...distractors, ...fallback].slice(0, 3).map((item) => item.meaningZh)]
+  const correctMeaning = meaningFor(word, language)
+  const distractors = a1Vocabulary.filter((item) => meaningFor(item, language) !== correctMeaning).slice(index + 1, index + 4)
+  const fallback = a1Vocabulary.filter((item) => meaningFor(item, language) !== correctMeaning).slice(0, 4)
+  const options = [correctMeaning, ...[...distractors, ...fallback].slice(0, 3).map((item) => meaningFor(item, language))]
 
   return {
     type: 'vocabulary',
-    prompt: `${index + 1}/${words.length}\n${word.spanish} 是什么意思？`,
+    prompt: language === 'en' ? `${index + 1}/${words.length}\nWhat does ${word.spanish} mean?` : `${index + 1}/${words.length}\n${word.spanish} 是什么意思？`,
     word,
     options,
-    correctAnswer: word.meaningZh,
+    correctAnswer: correctMeaning,
   }
 }
 
-export function evaluateVocabularyAnswer(question: VocabularyQuestion, answer: string) {
+export function evaluateVocabularyAnswer(question: VocabularyQuestion, answer: string, language: InterfaceLanguage = 'zh') {
   const correct = answer === question.correctAnswer
+  const meaning = language === 'en' ? meaningFor(question.word, 'en') : question.word.meaningZh
+  const example = language === 'en' ? exampleFor(question.word, 'en') : question.word.exampleZh
   return {
     correct,
     addToMistakes: !correct,
     message: correct
-      ? `✅ 正确！\n\n${question.word.spanish} = ${question.word.meaningZh}\n${question.word.exampleEs}\n${question.word.exampleZh}`
-      : `❌ 不对。正确答案：${question.correctAnswer}\n\n${question.word.exampleEs}\n${question.word.exampleZh}\n已加入错题复习。`,
+      ? language === 'en'
+        ? `✅ Correct!\n\n${question.word.spanish} = ${meaning}\n${question.word.exampleEs}\n${example}`
+        : `✅ 正确！\n\n${question.word.spanish} = ${meaning}\n${question.word.exampleEs}\n${example}`
+      : language === 'en'
+        ? `❌ Not quite. Correct answer: ${question.correctAnswer}\n\n${question.word.exampleEs}\n${example}\nAdded to mistake review.`
+        : `❌ 不对。正确答案：${question.correctAnswer}\n\n${question.word.exampleEs}\n${example}\n已加入错题复习。`,
   }
 }
 
@@ -236,7 +278,17 @@ export function buildReadingPrompt(level = 'A1'): ReadingPrompt {
   }
 }
 
-export function buildTranslationMenu(): CoachMenu {
+export function buildTranslationMenu(language: InterfaceLanguage = 'zh'): CoachMenu {
+  if (language === 'en') {
+    return {
+      text: 'Choose translation direction:',
+      buttons: [
+        [{ text: 'English/Chinese → Spanish', callback_data: 'translate:zh-es' }],
+        [{ text: 'Spanish → English', callback_data: 'translate:es-zh' }],
+        [{ text: 'Back to Main Menu', callback_data: 'menu:main' }],
+      ],
+    }
+  }
   return {
     text: '请选择翻译方向：',
     buttons: [
@@ -278,20 +330,22 @@ export function recordCheckIn(state: TelegramLearnerState, isoDate = new Date().
   return state
 }
 
-export function buildLeaderboardText(learners: TelegramLearnerState[]) {
+export function buildLeaderboardText(learners: TelegramLearnerState[], language: InterfaceLanguage = 'zh') {
   const rows = [...learners].sort((a, b) =>
     b.learnedVocabularyCount - a.learnedVocabularyCount ||
     a.wrongVocabularyCount - b.wrongVocabularyCount ||
     b.checkInDays - a.checkInDays,
   )
 
-  if (!rows.length) return '🏆 排行榜\n\n还没有学习记录。'
+  if (!rows.length) return language === 'en' ? '🏆 Leaderboard\n\nNo learning records yet.' : '🏆 排行榜\n\n还没有学习记录。'
 
   return [
-    '🏆 排行榜',
+    language === 'en' ? '🏆 Leaderboard' : '🏆 排行榜',
     '',
     ...rows.map((learner, index) =>
-      `${index + 1}. ${learner.displayName} — 学会 ${learner.learnedVocabularyCount}｜错题 ${learner.wrongVocabularyCount}｜打卡 ${learner.checkInDays} 天`,
+      language === 'en'
+        ? `${index + 1}. ${learner.displayName} — learned ${learner.learnedVocabularyCount} | mistakes ${learner.wrongVocabularyCount} | check-ins ${learner.checkInDays} days`
+        : `${index + 1}. ${learner.displayName} — 学会 ${learner.learnedVocabularyCount}｜错题 ${learner.wrongVocabularyCount}｜打卡 ${learner.checkInDays} 天`,
     ),
   ].join('\n')
 }
@@ -385,18 +439,36 @@ export function recordQuizAnswer(session: QuizSession, selectedAnswer: string) {
   return { correct, shouldContinue: session.currentIndex < session.questions.length, completed: session.currentIndex >= session.questions.length }
 }
 
-export function buildQuizSummary(session: QuizSession) {
+export function buildQuizSummary(session: QuizSession, language: InterfaceLanguage = 'zh') {
   const total = session.answers.length
   const accuracy = total ? Math.round((session.correctCount / total) * 100) : 0
   const rows = session.answers.map((answer, index) =>
-    `${index + 1}. ${answer.correct ? '✅' : '❌'} ${answer.prompt.replace(/\n/g, ' ')}\n你的答案：${answer.selectedAnswer}\n正确答案：${answer.correctAnswer}${answer.explanation ? `\n解析：${answer.explanation}` : ''}`,
+    language === 'en'
+      ? `${index + 1}. ${answer.correct ? '✅' : '❌'} ${answer.prompt.replace(/\n/g, ' ')}\nYour answer: ${answer.selectedAnswer}\nCorrect answer: ${answer.correctAnswer}${answer.explanation ? `\nExplanation: ${answer.explanation}` : ''}`
+      : `${index + 1}. ${answer.correct ? '✅' : '❌'} ${answer.prompt.replace(/\n/g, ' ')}\n你的答案：${answer.selectedAnswer}\n正确答案：${answer.correctAnswer}${answer.explanation ? `\n解析：${answer.explanation}` : ''}`,
   )
-  return [`🎉 ${session.title ?? '本轮'}${total}题完成`, `正确：${session.correctCount}/${total}`, `正确率：${accuracy}%`, '', '答题结果：', ...rows].join('\n')
+  return language === 'en'
+    ? [`🎉 ${session.title ?? 'Round'} completed: ${total} questions`, `Correct: ${session.correctCount}/${total}`, `Accuracy: ${accuracy}%`, '', 'Results:', ...rows].join('\n')
+    : [`🎉 ${session.title ?? '本轮'}${total}题完成`, `正确：${session.correctCount}/${total}`, `正确率：${accuracy}%`, '', '答题结果：', ...rows].join('\n')
 }
 
-export function buildMistakeBookText(displayName: string, stats: Partial<MistakeStats> = {}) {
+export function buildMistakeBookText(displayName: string, stats: Partial<MistakeStats> = {}, language: InterfaceLanguage = 'zh') {
   const merged = { ...emptyMistakeStats, ...stats }
   const total = merged.vocabulary + merged.grammar + merged.translation + merged.reading + merged.speaking
+  if (language === 'en') {
+    return [
+      `Mistake Book: ${displayName}`,
+      `Current total mistakes: ${total}`,
+      '',
+      `Vocabulary mistakes: ${merged.vocabulary}`,
+      `Grammar mistakes: ${merged.grammar}`,
+      `Translation mistakes: ${merged.translation}`,
+      `Reading mistakes: ${merged.reading}`,
+      `Speaking review items: ${merged.speaking}`,
+      '',
+      total > 0 ? 'Tap the matching test mode to review mistakes.' : 'No mistakes recorded yet.',
+    ].join('\n')
+  }
   return [
     `错题本：${displayName}`,
     `当前错题总数：${total}`,
@@ -411,71 +483,84 @@ export function buildMistakeBookText(displayName: string, stats: Partial<Mistake
   ].join('\n')
 }
 
-export function generateVocabularyQuestionSet(mode: VocabMode, level = 'A1'): QuizQuestion[] {
+export function generateVocabularyQuestionSet(mode: VocabMode, level = 'A1', language: InterfaceLanguage = 'zh'): QuizQuestion[] {
   const words = generateVocabularySet(mode, level)
   return words.map((_, index) => {
-    const question = buildVocabularyQuestion(words, index)
+    const question = buildVocabularyQuestion(words, index, language)
+    const meaning = meaningFor(question.word, language)
+    const example = exampleFor(question.word, language)
     return {
-      prompt: `${question.word.spanish} 是什么意思？`,
+      prompt: language === 'en' ? `What does ${question.word.spanish} mean?` : `${question.word.spanish} 是什么意思？`,
       options: question.options,
       correctAnswer: question.correctAnswer,
-      explanation: `${question.word.spanish} = ${question.word.meaningZh}\n${question.word.exampleEs}\n${question.word.exampleZh}`,
+      explanation: `${question.word.spanish} = ${meaning}\n${question.word.exampleEs}\n${example}`,
     }
   })
 }
 
-export function generateGrammarQuestionSet(level = 'A1'): QuizQuestion[] {
+export function generateGrammarQuestionSet(level = 'A1', language: InterfaceLanguage = 'zh'): QuizQuestion[] {
   return Array.from({ length: 20 }, (_, index) => {
     const question = generateGrammarQuestion(index % 2 === 0 ? level : level === 'A1' ? 'A2' : level)
     return {
-      prompt: question.prompt,
+      prompt: language === 'en' ? question.prompt.replace('选择正确答案：', 'Choose the correct answer:') : question.prompt,
       options: question.options,
       correctAnswer: question.correctAnswer,
-      explanation: question.explanation,
+      explanation: language === 'en' ? translateFixedGrammarExplanation(question.explanation) : question.explanation,
     }
   })
 }
 
-export function generateTranslationQuestionSet(direction: 'zh-es' | 'es-zh' = 'zh-es'): QuizQuestion[] {
+function translateFixedGrammarExplanation(explanation: string) {
+  if (explanation.includes('位置，用 estar')) return 'Location uses estar. Correct sentence: Yo estoy en Madrid.'
+  if (explanation.includes('condicional')) return 'In this conditional pattern, use condicional in the main clause: estudiaría.'
+  return explanation
+}
+
+export function generateTranslationQuestionSet(direction: 'zh-es' | 'es-zh' = 'zh-es', language: InterfaceLanguage = 'zh'): QuizQuestion[] {
   return generateVocabularySet('new', 'A1').map((word, index) => {
     const options = [word.exampleEs, ...a1Vocabulary.filter((item) => item.exampleEs !== word.exampleEs).slice(index + 1, index + 4).map((item) => item.exampleEs)]
-    const fallbackOptions = [word.exampleZh, ...a1Vocabulary.filter((item) => item.exampleZh !== word.exampleZh).slice(index + 1, index + 4).map((item) => item.exampleZh)]
+    const sourceText = language === 'en' ? exampleFor(word, 'en') : word.exampleZh
+    const fallbackOptions = [sourceText, ...a1Vocabulary.filter((item) => item.exampleZh !== word.exampleZh).slice(index + 1, index + 4).map((item) => language === 'en' ? exampleFor(item, 'en') : item.exampleZh)]
     return direction === 'zh-es'
       ? {
-          prompt: `请选择正确的西语翻译：\n\n${word.exampleZh}`,
+          prompt: language === 'en' ? `Choose the correct Spanish translation:\n\n${sourceText}` : `请选择正确的西语翻译：\n\n${sourceText}`,
           options,
           correctAnswer: word.exampleEs,
-          explanation: `${word.exampleZh}\n${word.exampleEs}`,
+          explanation: `${sourceText}\n${word.exampleEs}`,
         }
       : {
-          prompt: `请选择正确的中文意思：\n\n${word.exampleEs}`,
+          prompt: language === 'en' ? `Choose the correct English meaning:\n\n${word.exampleEs}` : `请选择正确的中文意思：\n\n${word.exampleEs}`,
           options: fallbackOptions,
-          correctAnswer: word.exampleZh,
-          explanation: `${word.exampleEs}\n${word.exampleZh}`,
+          correctAnswer: sourceText,
+          explanation: `${word.exampleEs}\n${sourceText}`,
         }
   })
 }
 
-export function generateReadingQuestionSet(level = 'A1'): QuizQuestion[] {
+export function generateReadingQuestionSet(level = 'A1', language: InterfaceLanguage = 'zh'): QuizQuestion[] {
   return generateVocabularySet('new', level).map((word, index) => {
     const options = [word.exampleEs, ...a1Vocabulary.filter((item) => item.exampleEs !== word.exampleEs).slice(index + 1, index + 4).map((item) => item.exampleEs)]
+    const meaning = language === 'en' ? exampleFor(word, 'en') : word.exampleZh
     return {
-      prompt: `句子朗读：请选择本题要朗读的句子。\n\n${word.exampleZh}`,
+      prompt: language === 'en' ? `Reading aloud: choose the sentence for this prompt.\n\n${meaning}` : `句子朗读：请选择本题要朗读的句子。\n\n${meaning}`,
       options,
       correctAnswer: word.exampleEs,
-      explanation: `请朗读：${word.exampleEs}\n意思：${word.exampleZh}`,
+      explanation: language === 'en' ? `Read aloud: ${word.exampleEs}\nMeaning: ${meaning}` : `请朗读：${word.exampleEs}\n意思：${meaning}`,
     }
   })
 }
 
-export function getQuizTypeTitle(quizType: QuizSession['quizType']) {
+export function getQuizTypeTitle(quizType: QuizSession['quizType'], language: InterfaceLanguage = 'zh') {
+  if (language === 'en') {
+    return quizType === 'vocabulary' ? 'Vocabulary Quiz' : quizType === 'grammar' ? 'Grammar Quiz' : quizType === 'translation' ? 'Sentence Translation' : 'Reading Aloud'
+  }
   return quizType === 'vocabulary' ? '词汇测试' : quizType === 'grammar' ? '语法测试' : quizType === 'translation' ? '句子翻译' : '句子朗读'
 }
 
-export function buildQuizQuestionMessage(session: QuizSession, question: QuizQuestion) {
+export function buildQuizQuestionMessage(session: QuizSession, question: QuizQuestion, language: InterfaceLanguage = 'zh') {
   return [
-    session.title ?? getQuizTypeTitle(session.quizType),
-    `第 ${session.currentIndex + 1}/${session.questions.length} 题`,
+    session.title ?? getQuizTypeTitle(session.quizType, language),
+    language === 'en' ? `Question ${session.currentIndex + 1}/${session.questions.length}` : `第 ${session.currentIndex + 1}/${session.questions.length} 题`,
     '',
     question.prompt,
   ].join('\n')
@@ -487,9 +572,22 @@ export function buildQuizAnswerKeyboard(session: QuizSession, question: QuizQues
   ])
 }
 
-export function buildQuizReviewMessage(session: QuizSession, answerIndex: number) {
+export function buildQuizReviewMessage(session: QuizSession, answerIndex: number, language: InterfaceLanguage = 'zh') {
   const answer = session.answers[answerIndex]
-  if (!answer) return '这道题还没有答题记录。'
+  if (!answer) return language === 'en' ? 'This question has no answer record yet.' : '这道题还没有答题记录。'
+  if (language === 'en') {
+    return [
+      `${session.title ?? getQuizTypeTitle(session.quizType, language)} | Question ${answerIndex + 1}/${session.questions.length}`,
+      '',
+      answer.correct ? '✅ Correct' : '❌ Incorrect',
+      '',
+      answer.prompt.replace(/\n/g, ' '),
+      `Your answer: ${answer.selectedAnswer}`,
+      `Correct answer: ${answer.correctAnswer}`,
+      '',
+      `Key point: ${answer.explanation ?? 'Review the correct answer.'}`,
+    ].join('\n')
+  }
   return [
     `${session.title ?? getQuizTypeTitle(session.quizType)}｜第 ${answerIndex + 1}/${session.questions.length} 题`,
     '',
@@ -503,10 +601,10 @@ export function buildQuizReviewMessage(session: QuizSession, answerIndex: number
   ].join('\n')
 }
 
-export function buildQuizReviewKeyboard(session: QuizSession, answerIndex: number) {
+export function buildQuizReviewKeyboard(session: QuizSession, answerIndex: number, language: InterfaceLanguage = 'zh') {
   return [[
-    { text: '上一题', callback_data: `quiz-review:${session.id}:${Math.max(0, answerIndex - 1)}` },
-    { text: answerIndex >= session.answers.length - 1 ? '下一题' : '下一题', callback_data: `quiz-next:${session.id}` },
+    { text: language === 'en' ? 'Previous' : '上一题', callback_data: `quiz-review:${session.id}:${Math.max(0, answerIndex - 1)}` },
+    { text: language === 'en' ? 'Next' : '下一题', callback_data: `quiz-next:${session.id}` },
   ]]
 }
 
@@ -538,7 +636,17 @@ export type SpeakingExerciseInsert = {
   score: number
 }
 
-export function buildSpeakingModeMenu(): CoachMenu {
+export function buildSpeakingModeMenu(language: InterfaceLanguage = 'zh'): CoachMenu {
+  if (language === 'en') {
+    return {
+      text: 'Choose a speaking test type:',
+      buttons: [
+        [{ text: 'Read Sentences', callback_data: 'speaking:read_sentence' }],
+        [{ text: 'Answer Questions', callback_data: 'speaking:answer_question' }],
+        [{ text: 'Back to Main Menu', callback_data: 'menu:main' }],
+      ],
+    }
+  }
   return {
     text: '请选择口语测试类型：',
     buttons: [
@@ -549,26 +657,26 @@ export function buildSpeakingModeMenu(): CoachMenu {
   }
 }
 
-export function generateSpeakingPromptSet(mode: SpeakingMode, level = 'A1'): SpeakingPrompt[] {
+export function generateSpeakingPromptSet(mode: SpeakingMode, level = 'A1', language: InterfaceLanguage = 'zh'): SpeakingPrompt[] {
   return generateVocabularySet('new', level).map((word) =>
     mode === 'read_sentence'
       ? {
           mode,
-          prompt: `请朗读这个句子：\n${word.exampleEs}\n${word.exampleZh}`,
+          prompt: language === 'en' ? `Read this sentence aloud:\n${word.exampleEs}\n${exampleFor(word, 'en')}` : `请朗读这个句子：\n${word.exampleEs}\n${word.exampleZh}`,
           targetAnswer: word.exampleEs,
-          guide: '注意重音、元音清晰度和整句连贯度。',
+          guide: language === 'en' ? 'Pay attention to stress, clear vowels, and smooth sentence flow.' : '注意重音、元音清晰度和整句连贯度。',
         }
       : {
           mode,
-          prompt: `请用西语语音回答问题：\n¿Qué significa “${word.spanish}”?`,
-          targetAnswer: word.meaningZh,
-          guide: `可以回答：${word.spanish} significa ${word.meaningZh}.`,
+          prompt: language === 'en' ? `Answer this question in Spanish by voice:\nWhat does “${word.spanish}” mean?` : `请用西语语音回答问题：\n¿Qué significa “${word.spanish}”?`,
+          targetAnswer: language === 'en' ? `${word.spanish} means ${meaningFor(word, 'en')}.` : word.meaningZh,
+          guide: language === 'en' ? `You can answer: ${word.spanish} means ${meaningFor(word, 'en')}.` : `可以回答：${word.spanish} significa ${word.meaningZh}.`,
         },
   )
 }
 
-export function buildSpeakingPromptMessage(prompt: SpeakingPrompt, index: number, total: number) {
-  return [`口语测试｜第 ${index + 1}/${total} 题`, '', prompt.prompt, '', '请发送语音回答。'].join('\n')
+export function buildSpeakingPromptMessage(prompt: SpeakingPrompt, index: number, total: number, language: InterfaceLanguage = 'zh') {
+  return [language === 'en' ? `Speaking Test | Question ${index + 1}/${total}` : `口语测试｜第 ${index + 1}/${total} 题`, '', prompt.prompt, '', language === 'en' ? 'Please send a voice message.' : '请发送语音回答。'].join('\n')
 }
 
 function normalizeSpeech(text: string) {
@@ -581,7 +689,7 @@ function normalizeSpeech(text: string) {
     .trim()
 }
 
-export function evaluateSpokenAttempt(prompt: SpeakingPrompt, transcript: string): SpeakingFeedback {
+export function evaluateSpokenAttempt(prompt: SpeakingPrompt, transcript: string, language: InterfaceLanguage = 'zh'): SpeakingFeedback {
   const target = normalizeSpeech(prompt.targetAnswer)
   const spoken = normalizeSpeech(transcript)
   const targetTokens = target.split(' ').filter(Boolean)
@@ -590,7 +698,7 @@ export function evaluateSpokenAttempt(prompt: SpeakingPrompt, transcript: string
   const missingWords = targetTokens.filter((token) => !spokenTokens.has(token))
   const score = targetTokens.length ? Math.max(30, Math.round((recognizedWords.length / targetTokens.length) * 100)) : 60
   const needsReview = score < 80
-  const guidance = buildSpeakingGuidance(prompt, score, missingWords)
+  const guidance = buildSpeakingGuidance(prompt, score, missingWords, language)
   return {
     score,
     transcript,
@@ -629,17 +737,38 @@ export function findBestSpeakingPromptForTranscript(
   return bestPrompt && bestScore >= 0.25 ? { prompt: bestPrompt, index: bestIndex, score: bestScore } : null
 }
 
-function buildSpeakingGuidance(prompt: SpeakingPrompt, score: number, missingWords: string[]) {
-  if (!prompt.targetAnswer.trim()) return '没有标准答案，请重新开始本题。'
+function buildSpeakingGuidance(prompt: SpeakingPrompt, score: number, missingWords: string[], language: InterfaceLanguage = 'zh') {
+  if (!prompt.targetAnswer.trim()) return language === 'en' ? 'No reference answer. Please restart this question.' : '没有标准答案，请重新开始本题。'
+  if (language === 'en') {
+    if (score >= 90) return `Great! The transcription is very close to the target sentence. ${prompt.guide}`
+    if (score >= 80) return `Good, you basically said it correctly. ${prompt.guide}`
+    const missing = missingWords.length ? `\nFocus on: ${missingWords.join(' / ')}` : ''
+    return `Please practice once more. ${prompt.guide}${missing}\nReference: ${prompt.targetAnswer}`
+  }
   if (score >= 90) return `很好！语音识别和目标句高度一致。${prompt.guide}`
   if (score >= 80) return `不错，基本读对了。${prompt.guide}`
   const missing = missingWords.length ? `\n需要重点重读：${missingWords.join(' / ')}` : ''
   return `建议再练一遍。${prompt.guide}${missing}\n标准参考：${prompt.targetAnswer}`
 }
 
-export function buildSpeakingFeedbackMessage(prompt: SpeakingPrompt, feedback: SpeakingFeedback, index: number, total: number) {
-  const reviewLine = feedback.needsReview ? '已加入口语复习/错题队列。' : '本题通过，继续下一题。'
-  const missingLine = feedback.missingWords.length ? `需要重读：${feedback.missingWords.join(' / ')}` : undefined
+export function buildSpeakingFeedbackMessage(prompt: SpeakingPrompt, feedback: SpeakingFeedback, index: number, total: number, language: InterfaceLanguage = 'zh') {
+  const reviewLine = feedback.needsReview
+    ? language === 'en' ? 'Added to speaking review/mistake queue.' : '已加入口语复习/错题队列。'
+    : language === 'en' ? 'Passed. Continue to the next question.' : '本题通过，继续下一题。'
+  const missingLine = feedback.missingWords.length ? `${language === 'en' ? 'Practice again' : '需要重读'}：${feedback.missingWords.join(' / ')}` : undefined
+  if (language === 'en') {
+    return [
+      `Speaking Score | Question ${index + 1}/${total}`,
+      '',
+      `Score: ${feedback.score}/100`,
+      `Transcript: ${feedback.transcript || 'No clear speech recognized'}`,
+      `Reference answer: ${feedback.corrected}`,
+      missingLine,
+      '',
+      `Guidance: ${buildSpeakingGuidance(prompt, feedback.score, feedback.missingWords, 'en')}`,
+      reviewLine,
+    ].filter(Boolean).join('\n')
+  }
   return [
     `口语评分｜第 ${index + 1}/${total} 题`,
     '',

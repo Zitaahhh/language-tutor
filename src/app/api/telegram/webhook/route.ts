@@ -382,9 +382,10 @@ async function sendMenu(chatId: number | string, menu: { text: string; buttons: 
 async function sendQuizQuestion(chatId: number | string, session: QuizSession) {
   const question = getNextQuizQuestion(session)
   if (!question) return null
+  const language = getLearnerLanguage(session.telegramUserId)
   return callTelegram('sendMessage', {
     chat_id: chatId,
-    text: buildQuizQuestionMessage(session, question),
+    text: buildQuizQuestionMessage(session, question, language),
     reply_markup: toInlineKeyboard(buildQuizAnswerKeyboard(session, question)),
   })
 }
@@ -392,10 +393,11 @@ async function sendQuizQuestion(chatId: number | string, session: QuizSession) {
 async function editQuizQuestion(chatId: number | string, messageId: number | undefined, session: QuizSession) {
   const question = getNextQuizQuestion(session)
   if (!question || !messageId) return null
+  const language = getLearnerLanguage(session.telegramUserId)
   return callTelegram('editMessageText', {
     chat_id: chatId,
     message_id: messageId,
-    text: buildQuizQuestionMessage(session, question),
+    text: buildQuizQuestionMessage(session, question, language),
     reply_markup: toInlineKeyboard(buildQuizAnswerKeyboard(session, question)),
   })
 }
@@ -407,17 +409,18 @@ async function startQuiz(chatId: number | string, session: QuizSession) {
 
 async function sendSpeakingPrompt(chatId: number | string, learnerId: string) {
   const session = speakingSessions.get(learnerId)
+  const language = getLearnerLanguage(learnerId)
   if (!session) return null
   const prompt = session.prompts[session.currentIndex]
   if (!prompt) {
     const total = session.scores.length
     const average = total ? Math.round(session.scores.reduce((sum, score) => sum + score, 0) / total) : 0
     speakingSessions.delete(learnerId)
-    return callTelegram('sendMessage', { chat_id: chatId, text: `🎉 口语测试完成\n完成：${total}/20\n平均分：${average}/100` })
+    return callTelegram('sendMessage', { chat_id: chatId, text: language === 'en' ? `🎉 Speaking test completed\nCompleted: ${total}/20\nAverage score: ${average}/100` : `🎉 口语测试完成\n完成：${total}/20\n平均分：${average}/100` })
   }
   const response = await callTelegram('sendMessage', {
     chat_id: chatId,
-    text: buildSpeakingPromptMessage(prompt, session.currentIndex, session.prompts.length),
+    text: buildSpeakingPromptMessage(prompt, session.currentIndex, session.prompts.length, language),
   })
   const messageId = typeof response?.result?.message_id === 'number' ? response.result.message_id : undefined
   if (messageId) session.lastMessageId = messageId
@@ -540,7 +543,7 @@ async function handleTextMessage(message: TelegramMessage) {
       persistentSession = await loadPersistentSpeakingSession(learner.telegramUserId)
       if (persistentSession) {
         const mode = persistentSession.mode === 'answer_question' ? 'answer_question' : 'read_sentence'
-        const prompts = generateSpeakingPromptSet(mode, 'A1')
+        const prompts = generateSpeakingPromptSet(mode, 'A1', getLearnerLanguage(learner.telegramUserId))
         session = {
           prompts,
           currentIndex: Math.min(Number(persistentSession.correct_count ?? 0), prompts.length - 1),
@@ -560,34 +563,43 @@ async function handleTextMessage(message: TelegramMessage) {
       const translated = await translateTranscriptToSpanish(transcript)
       const translationPrompt: SpeakingPrompt = {
         mode: 'answer_question',
-        prompt: `自由语音翻译：${transcript}`,
+        prompt: getLearnerLanguage(learner.telegramUserId) === 'en' ? `Free voice translation: ${transcript}` : `自由语音翻译：${transcript}`,
         targetAnswer: translated,
-        guide: '这是自由语音翻译，不按口语测试题评分；请跟读西语译文，注意元音清晰。',
+        guide: getLearnerLanguage(learner.telegramUserId) === 'en' ? 'This is free voice translation, not a scored speaking-test item. Repeat the Spanish translation and keep vowels clear.' : '这是自由语音翻译，不按口语测试题评分；请跟读西语译文，注意元音清晰。',
       }
       void persistSpeakingExercise({
         telegram_user_id: learner.telegramUserId,
         target_sentence_es: translated,
         target_sentence_zh: transcript,
         transcript,
-        feedback: `自由语音翻译：${translated}`,
+        feedback: getLearnerLanguage(learner.telegramUserId) === 'en' ? `Free voice translation: ${translated}` : `自由语音翻译：${translated}`,
         score: 0,
       })
+      const freeVoiceLanguage = getLearnerLanguage(learner.telegramUserId)
       await callTelegram('sendMessage', {
         chat_id: chatId,
-        text: [
-          '没有检测到正在进行的口语测试，也没有匹配到相近题目。',
-          '我把这条语音当作自由表达来处理：',
-          '',
-          `识别内容：${transcript || '未识别到清晰内容'}`,
-          `西班牙语：${translated || '暂时无法翻译，请再发一次更清楚的语音。'}`,
-        ].join('\n'),
+        text: freeVoiceLanguage === 'en'
+          ? [
+              'No active speaking test was detected, and I could not match this voice message to a question.',
+              'I treated it as free speaking practice:',
+              '',
+              `Transcript: ${transcript || 'No clear speech recognized'}`,
+              `Spanish: ${translated || 'Could not translate it yet. Please send a clearer voice message.'}`,
+            ].join('\n')
+          : [
+              '没有检测到正在进行的口语测试，也没有匹配到相近题目。',
+              '我把这条语音当作自由表达来处理：',
+              '',
+              `识别内容：${transcript || '未识别到清晰内容'}`,
+              `西班牙语：${translated || '暂时无法翻译，请再发一次更清楚的语音。'}`,
+            ].join('\n'),
       })
       if (translated) await sendPronunciationAudio(chatId, translationPrompt.targetAnswer)
       return
     }
 
     const prompt = activePrompt ?? fallbackMatch?.prompt ?? fallbackSpeakingPrompt
-    const feedback = evaluateSpokenAttempt(prompt, transcript)
+    const feedback = evaluateSpokenAttempt(prompt, transcript, getLearnerLanguage(learner.telegramUserId))
     session?.scores.push(feedback.score)
     void persistSpeakingExercise(toSpeakingExerciseInsert(learner.telegramUserId, prompt, feedback))
     if (persistentSession?.id) void persistSpeakingAnswer(persistentSession.id, prompt, feedback)
@@ -597,9 +609,13 @@ async function handleTextMessage(message: TelegramMessage) {
         activePrompt
           ? ''
           : fallbackMatch
-            ? `没有检测到正在进行的口语测试；我根据你的语音自动匹配到第 ${fallbackMatch.index + 1} 题来纠正：`
-            : '没有检测到正在进行的口语测试，也没有匹配到相近题目；我先按 Day 1 默认句子给你纠正：',
-        buildSpeakingFeedbackMessage(prompt, feedback, activePrompt ? session?.currentIndex ?? 0 : fallbackMatch?.index ?? 0, session?.prompts.length ?? 1),
+            ? getLearnerLanguage(learner.telegramUserId) === 'en'
+              ? `No active speaking test was detected; I matched your voice to question ${fallbackMatch.index + 1} for correction:`
+              : `没有检测到正在进行的口语测试；我根据你的语音自动匹配到第 ${fallbackMatch.index + 1} 题来纠正：`
+            : getLearnerLanguage(learner.telegramUserId) === 'en'
+              ? 'No active speaking test was detected and no similar question was matched; I corrected it using the default Day 1 sentence:'
+              : '没有检测到正在进行的口语测试，也没有匹配到相近题目；我先按 Day 1 默认句子给你纠正：',
+        buildSpeakingFeedbackMessage(prompt, feedback, activePrompt ? session?.currentIndex ?? 0 : fallbackMatch?.index ?? 0, session?.prompts.length ?? 1, getLearnerLanguage(learner.telegramUserId)),
       ].filter((line) => line.length > 0).join('\n\n'),
     })
     await sendPronunciationAudio(chatId, prompt.targetAnswer)
@@ -627,18 +643,19 @@ async function handleTextMessage(message: TelegramMessage) {
   }
 
   if (text.startsWith('/grammar')) {
-    const session = createQuizSession(learner.telegramUserId, 'grammar', generateGrammarQuestionSet('A1'), '语法测试')
+    const lang = getLearnerLanguage(learner.telegramUserId)
+    const session = createQuizSession(learner.telegramUserId, 'grammar', generateGrammarQuestionSet('A1', lang), lang === 'en' ? 'Grammar Quiz' : '语法测试')
     await startQuiz(chatId, session)
     return
   }
 
   if (text.startsWith('/translate')) {
-    await sendMenu(chatId, buildTranslationMenu())
+    await sendMenu(chatId, buildTranslationMenu(getLearnerLanguage(learner.telegramUserId)))
     return
   }
 
   if (text.startsWith('/speak')) {
-    await sendMenu(chatId, buildSpeakingModeMenu())
+    await sendMenu(chatId, buildSpeakingModeMenu(getLearnerLanguage(learner.telegramUserId)))
     return
   }
 
@@ -652,6 +669,7 @@ async function handleCallback(callback: TelegramCallbackQuery) {
 
   const data = callback.data
   const learner = getLearner(callback.from)
+  const language = getLearnerLanguage(learner.telegramUserId)
 
   if (data === 'menu:main') return sendMenu(chatId, getMainMenuForLearner(learner.telegramUserId))
   if (data === 'menu:language') return sendMenu(chatId, buildLanguageMenu())
@@ -661,34 +679,34 @@ async function handleCallback(callback: TelegramCallbackQuery) {
     await callTelegram('sendMessage', { chat_id: chatId, text: buildLanguageChangedMessage(language) })
     return sendMenu(chatId, getMainMenuForLearner(learner.telegramUserId))
   }
-  if (data === 'menu:vocab') return sendMenu(chatId, buildVocabularyModeMenu(getLearnerLanguage(learner.telegramUserId)))
-  if (data === 'menu:translate') return sendMenu(chatId, buildTranslationMenu())
+  if (data === 'menu:vocab') return sendMenu(chatId, buildVocabularyModeMenu(language))
+  if (data === 'menu:translate') return sendMenu(chatId, buildTranslationMenu(language))
 
   if (data === 'menu:grammar') {
-    const session = createQuizSession(learner.telegramUserId, 'grammar', generateGrammarQuestionSet('A1'), '语法测试')
+    const session = createQuizSession(learner.telegramUserId, 'grammar', generateGrammarQuestionSet('A1', language), language === 'en' ? 'Grammar Quiz' : '语法测试')
     return startQuiz(chatId, session)
   }
 
-  if (data === 'menu:speaking' || data === 'menu:reading') return sendMenu(chatId, buildSpeakingModeMenu())
+  if (data === 'menu:speaking' || data === 'menu:reading') return sendMenu(chatId, buildSpeakingModeMenu(language))
 
   if (data === 'menu:progress') {
-    return callTelegram('sendMessage', { chat_id: chatId, text: '今日进度：\n新词：0/20\n语法：0/10\n翻译：0 句\n朗读：0 句' })
+    return callTelegram('sendMessage', { chat_id: chatId, text: language === 'en' ? 'Today’s progress:\nNew words: 0/20\nGrammar: 0/10\nTranslation: 0 sentences\nSpeaking/reading: 0 sentences' : '今日进度：\n新词：0/20\n语法：0/10\n翻译：0 句\n朗读：0 句' })
   }
 
   if (data === 'menu:mistakes') {
     const stats = await loadMistakeStatsFromSupabase(learner.telegramUserId)
-    return callTelegram('sendMessage', { chat_id: chatId, text: buildMistakeBookText(learner.displayName, stats) })
+    return callTelegram('sendMessage', { chat_id: chatId, text: buildMistakeBookText(learner.displayName, stats, language) })
   }
 
   if (data === 'menu:leaderboard') {
-    return callTelegram('sendMessage', { chat_id: chatId, text: buildLeaderboardText(await loadLeaderboardFromSupabase()) })
+    return callTelegram('sendMessage', { chat_id: chatId, text: buildLeaderboardText(await loadLeaderboardFromSupabase(), language) })
   }
 
   if (data.startsWith('vocab:')) {
     const mode = data.split(':')[1] as VocabMode
     learner.currentQuestionIndex = 0
-    const title = mode === 'new' ? '学习20个新词汇' : mode === 'old' ? '复习20个旧词汇' : '错题复习'
-    const session = createQuizSession(learner.telegramUserId, 'vocabulary', generateVocabularyQuestionSet(mode, 'A1'), title)
+    const title = mode === 'new' ? (language === 'en' ? 'Learn 20 New Words' : '学习20个新词汇') : mode === 'old' ? (language === 'en' ? 'Review 20 Old Words' : '复习20个旧词汇') : (language === 'en' ? 'Review Mistakes' : '错题复习')
+    const session = createQuizSession(learner.telegramUserId, 'vocabulary', generateVocabularyQuestionSet(mode, 'A1', language), title)
     return startQuiz(chatId, session)
   }
 
@@ -698,10 +716,10 @@ async function handleCallback(callback: TelegramCallbackQuery) {
     const sessionId = payload.slice(0, separatorIndex)
     const selectedIndex = Number(payload.slice(separatorIndex + 1))
     const session = quizSessions.get(sessionId)
-    if (!session) return callTelegram('sendMessage', { chat_id: chatId, text: '题目已过期，请重新开始测试。' })
+    if (!session) return callTelegram('sendMessage', { chat_id: chatId, text: language === 'en' ? 'This question has expired. Please restart the test.' : '题目已过期，请重新开始测试。' })
     const question = getNextQuizQuestion(session)
     if (!question || !Number.isInteger(selectedIndex) || !question.options[selectedIndex]) {
-      return callTelegram('sendMessage', { chat_id: chatId, text: '答案无效，请重新开始测试。' })
+      return callTelegram('sendMessage', { chat_id: chatId, text: language === 'en' ? 'Invalid answer. Please restart the test.' : '答案无效，请重新开始测试。' })
     }
 
     const result = recordQuizAnswer(session, question.options[selectedIndex])
@@ -716,16 +734,16 @@ async function handleCallback(callback: TelegramCallbackQuery) {
       return callTelegram('editMessageText', {
         chat_id: chatId,
         message_id: callback.message?.message_id,
-        text: buildQuizReviewMessage(session, session.answers.length - 1),
-        reply_markup: toInlineKeyboard(buildQuizReviewKeyboard(session, session.answers.length - 1)),
+        text: buildQuizReviewMessage(session, session.answers.length - 1, language),
+        reply_markup: toInlineKeyboard(buildQuizReviewKeyboard(session, session.answers.length - 1, language)),
       })
     }
 
     return callTelegram('editMessageText', {
       chat_id: chatId,
       message_id: callback.message?.message_id,
-      text: buildQuizReviewMessage(session, session.answers.length - 1),
-      reply_markup: toInlineKeyboard(buildQuizReviewKeyboard(session, session.answers.length - 1)),
+      text: buildQuizReviewMessage(session, session.answers.length - 1, language),
+      reply_markup: toInlineKeyboard(buildQuizReviewKeyboard(session, session.answers.length - 1, language)),
     })
   }
 
@@ -735,26 +753,26 @@ async function handleCallback(callback: TelegramCallbackQuery) {
     const sessionId = payload.slice(0, separatorIndex)
     const answerIndex = Number(payload.slice(separatorIndex + 1))
     const session = quizSessions.get(sessionId)
-    if (!session || !Number.isInteger(answerIndex)) return callTelegram('sendMessage', { chat_id: chatId, text: '题目已过期，请重新开始测试。' })
+    if (!session || !Number.isInteger(answerIndex)) return callTelegram('sendMessage', { chat_id: chatId, text: language === 'en' ? 'This question has expired. Please restart the test.' : '题目已过期，请重新开始测试。' })
     return callTelegram('editMessageText', {
       chat_id: chatId,
       message_id: callback.message?.message_id,
-      text: buildQuizReviewMessage(session, answerIndex),
-      reply_markup: toInlineKeyboard(buildQuizReviewKeyboard(session, answerIndex)),
+      text: buildQuizReviewMessage(session, answerIndex, language),
+      reply_markup: toInlineKeyboard(buildQuizReviewKeyboard(session, answerIndex, language)),
     })
   }
 
   if (data.startsWith('quiz-next:')) {
     const sessionId = data.slice('quiz-next:'.length)
     const session = quizSessions.get(sessionId)
-    if (!session) return callTelegram('sendMessage', { chat_id: chatId, text: '题目已过期，请重新开始测试。' })
+    if (!session) return callTelegram('sendMessage', { chat_id: chatId, text: language === 'en' ? 'This question has expired. Please restart the test.' : '题目已过期，请重新开始测试。' })
     if (session.currentIndex >= session.questions.length) {
       quizSessions.delete(sessionId)
       void persistCompletedQuizSession(session)
       return callTelegram('editMessageText', {
         chat_id: chatId,
         message_id: callback.message?.message_id,
-        text: buildQuizSummary(session),
+        text: buildQuizSummary(session, language),
       })
     }
     return editQuizQuestion(chatId, callback.message?.message_id, session)
@@ -801,7 +819,7 @@ async function handleCallback(callback: TelegramCallbackQuery) {
 
   if (data.startsWith('speaking:')) {
     const mode = data.split(':')[1] === 'answer_question' ? 'answer_question' : 'read_sentence'
-    const prompts = generateSpeakingPromptSet(mode, 'A1')
+    const prompts = generateSpeakingPromptSet(mode, 'A1', language)
     speakingSessions.set(learner.telegramUserId, {
       prompts,
       currentIndex: 0,
@@ -817,8 +835,8 @@ async function handleCallback(callback: TelegramCallbackQuery) {
     const session = createQuizSession(
       learner.telegramUserId,
       'translation',
-      generateTranslationQuestionSet(direction),
-      direction === 'zh-es' ? '中文 → 西语' : '西语 → 中文',
+      generateTranslationQuestionSet(direction, language),
+      direction === 'zh-es' ? (language === 'en' ? 'English/Chinese → Spanish' : '中文 → 西语') : (language === 'en' ? 'Spanish → English' : '西语 → 中文'),
     )
     return startQuiz(chatId, session)
   }
