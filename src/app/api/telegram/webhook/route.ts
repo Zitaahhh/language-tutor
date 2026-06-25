@@ -399,7 +399,7 @@ async function persistVocabularyProgress(session: QuizSession) {
       level: question.vocabularyLevel ?? 'A1',
     }))
 
-  await fetch(`${cfg.url}/rest/v1/vocabulary_items`, {
+  await fetch(`${cfg.url}/rest/v1/vocabulary_items?on_conflict=spanish`, {
     method: 'POST',
     headers: {
       apikey: cfg.key,
