@@ -600,26 +600,65 @@ export function generateVocabularyQuestionSet(mode: VocabMode, level = 'A1', lan
   })
 }
 
-export function generateGrammarQuestionSet(level = 'A1', language: InterfaceLanguage = 'zh'): QuizQuestion[] {
-  return Array.from({ length: 20 }, (_, index) => {
-    const question = generateGrammarQuestion(index % 2 === 0 ? level : level === 'A1' ? 'A2' : level)
-    return {
-      prompt: language === 'en' ? question.prompt.replace('选择正确答案：', 'Choose the correct answer:') : question.prompt,
-      options: question.options,
-      correctAnswer: question.correctAnswer,
-      explanation: language === 'en' ? translateFixedGrammarExplanation(question.explanation) : question.explanation,
-    }
+function filterUnseenQuestions(questions: QuizQuestion[], excludedPrompts: string[] = []) {
+  const excluded = new Set(excludedPrompts.map((prompt) => prompt.trim().toLowerCase()))
+  const seen = new Set<string>()
+  return questions.filter((question) => {
+    const key = question.prompt.trim().toLowerCase()
+    if (excluded.has(key) || seen.has(key)) return false
+    seen.add(key)
+    return true
   })
 }
 
+const grammarQuestionBank: GrammarQuestion[] = [
+  { prompt: '选择正确答案：\n\nYo ___ en Madrid.', options: ['soy', 'estoy', 'es', 'está'], correctAnswer: 'estoy', explanation: '“在 Madrid” 表示位置，用 estar。正确句子：Yo estoy en Madrid.' },
+  { prompt: '选择正确答案：\n\nYo ___ estudiante.', options: ['soy', 'estoy', 'es', 'está'], correctAnswer: 'soy', explanation: '身份/职业用 ser。正确句子：Yo soy estudiante.' },
+  { prompt: '选择正确答案：\n\nElla ___ de México.', options: ['es', 'está', 'soy', 'estoy'], correctAnswer: 'es', explanation: '来自哪里用 ser de。正确句子：Ella es de México.' },
+  { prompt: '选择正确答案：\n\nNosotros ___ en casa.', options: ['somos', 'estamos', 'son', 'están'], correctAnswer: 'estamos', explanation: '位置“在家”用 estar。正确句子：Nosotros estamos en casa.' },
+  { prompt: '选择正确答案：\n\nEl café ___ caliente.', options: ['es', 'está', 'soy', 'estoy'], correctAnswer: 'está', explanation: '临时状态/温度用 estar。正确句子：El café está caliente.' },
+  { prompt: '选择正确答案：\n\nLa mesa ___ grande.', options: ['es', 'está', 'son', 'están'], correctAnswer: 'es', explanation: '描述固有特征用 ser。正确句子：La mesa es grande.' },
+  { prompt: '选择正确答案：\n\n¿De dónde ___ tú?', options: ['eres', 'estás', 'es', 'soy'], correctAnswer: 'eres', explanation: '问“你来自哪里”用 ser。¿De dónde eres tú?' },
+  { prompt: '选择正确答案：\n\nYo ___ chino.', options: ['hablo', 'hablas', 'habla', 'hablan'], correctAnswer: 'hablo', explanation: '第一人称单数 hablar 是 hablo。Yo hablo chino.' },
+  { prompt: '选择正确答案：\n\nTú ___ español.', options: ['hablo', 'hablas', 'habla', 'hablan'], correctAnswer: 'hablas', explanation: '第二人称单数 hablar 是 hablas。Tú hablas español.' },
+  { prompt: '选择正确答案：\n\nElla ___ inglés.', options: ['hablo', 'hablas', 'habla', 'hablan'], correctAnswer: 'habla', explanation: '第三人称单数 hablar 是 habla。Ella habla inglés.' },
+  { prompt: '选择正确答案：\n\n___ un café, por favor.', options: ['Quiero', 'Quieres', 'Quiere', 'Quieren'], correctAnswer: 'Quiero', explanation: '表达“我想要”用 quiero。Quiero un café, por favor.' },
+  { prompt: '选择正确答案：\n\n¿Tú ___ agua?', options: ['quiero', 'quieres', 'quiere', 'quieren'], correctAnswer: 'quieres', explanation: '问“你想要吗”用 quieres。¿Tú quieres agua?' },
+  { prompt: '选择正确答案：\n\nYo ___ una pregunta.', options: ['tengo', 'tienes', 'tiene', 'tienen'], correctAnswer: 'tengo', explanation: 'tener 第一人称是 tengo。Yo tengo una pregunta.' },
+  { prompt: '选择正确答案：\n\nElla ___ una reserva.', options: ['tengo', 'tienes', 'tiene', 'tienen'], correctAnswer: 'tiene', explanation: 'tener 第三人称单数是 tiene。Ella tiene una reserva.' },
+  { prompt: '选择正确答案：\n\n___ un restaurante cerca.', options: ['Hay', 'Estoy', 'Soy', 'Tiene'], correctAnswer: 'Hay', explanation: '表示“有/存在”用 hay。Hay un restaurante cerca.' },
+  { prompt: '选择正确答案：\n\nEl hotel está ___ la estación.', options: ['cerca de', 'soy de', 'hablo de', 'quiero de'], correctAnswer: 'cerca de', explanation: '“离……近”是 cerca de。El hotel está cerca de la estación.' },
+  { prompt: '选择正确答案：\n\nLa cuenta, ___ favor.', options: ['por', 'para', 'de', 'con'], correctAnswer: 'por', explanation: '礼貌表达“请”是 por favor。La cuenta, por favor.' },
+  { prompt: '选择正确答案：\n\nCafé ___ leche.', options: ['con', 'de', 'por', 'para'], correctAnswer: 'con', explanation: '“加/带有”用 con。Café con leche.' },
+  { prompt: '选择正确答案：\n\nCafé ___ azúcar.', options: ['sin', 'con', 'por', 'para'], correctAnswer: 'sin', explanation: '“不加/没有”用 sin。Café sin azúcar.' },
+  { prompt: '选择正确答案：\n\nVoy ___ metro.', options: ['en', 'de', 'por', 'sin'], correctAnswer: 'en', explanation: '交通方式常用 en。Voy en metro.' },
+  { prompt: '选择正确答案：\n\nSi tuviera tiempo, ___ más español.', options: ['estudio', 'estudié', 'estudiaría', 'estudiaba'], correctAnswer: 'estudiaría', explanation: '条件句 Si + imperfecto de subjuntivo，主句常用 condicional：estudiaría。' },
+  { prompt: '选择正确答案：\n\nSi pudiera, ___ a España.', options: ['viajo', 'viajaría', 'viajé', 'viajaba'], correctAnswer: 'viajaría', explanation: '假设条件下主句用 condicional：viajaría。' },
+  { prompt: '选择正确答案：\n\nAyer ___ español.', options: ['estudio', 'estudié', 'estudiaría', 'estudiar'], correctAnswer: 'estudié', explanation: 'ayer 表示过去，第一人称过去时可用 estudié。' },
+  { prompt: '选择正确答案：\n\nMañana ___ clase.', options: ['tengo', 'tuve', 'tendría', 'tener'], correctAnswer: 'tengo', explanation: '近期安排可用现在时：Mañana tengo clase.' },
+]
+
+export function generateGrammarQuestionSet(_level = 'A1', language: InterfaceLanguage = 'zh', excludedPrompts: string[] = []): QuizQuestion[] {
+  void _level
+  const localized = grammarQuestionBank.map((question) => ({
+    prompt: language === 'en' ? question.prompt.replace('选择正确答案：', 'Choose the correct answer:') : question.prompt,
+    options: question.options,
+    correctAnswer: question.correctAnswer,
+    explanation: language === 'en' ? translateFixedGrammarExplanation(question.explanation) : question.explanation,
+  }))
+  return filterUnseenQuestions(localized, excludedPrompts).slice(0, 20)
+}
+
 function translateFixedGrammarExplanation(explanation: string) {
-  if (explanation.includes('位置，用 estar')) return 'Location uses estar. Correct sentence: Yo estoy en Madrid.'
-  if (explanation.includes('condicional')) return 'In this conditional pattern, use condicional in the main clause: estudiaría.'
+  if (explanation.includes('位置，用 estar')) return 'Location uses estar. Correct sentence uses estar.'
+  if (explanation.includes('身份/职业用 ser')) return 'Identity or profession uses ser.'
+  if (explanation.includes('ser de')) return 'Origin uses ser de.'
+  if (explanation.includes('condicional')) return 'In this conditional pattern, use condicional in the main clause.'
   return explanation
 }
 
-export function generateTranslationQuestionSet(direction: 'zh-es' | 'es-zh' = 'zh-es', language: InterfaceLanguage = 'zh'): QuizQuestion[] {
-  return generateVocabularySet('new', 'A1').map((word, index) => {
+export function generateTranslationQuestionSet(direction: 'zh-es' | 'es-zh' = 'zh-es', language: InterfaceLanguage = 'zh', excludedPrompts: string[] = []): QuizQuestion[] {
+  const questions = generateVocabularySet('new', 'A1').map((word, index) => {
     const options = [word.exampleEs, ...a1Vocabulary.filter((item) => item.exampleEs !== word.exampleEs).slice(index + 1, index + 4).map((item) => item.exampleEs)]
     const sourceText = language === 'en' ? exampleFor(word, 'en') : word.exampleZh
     const fallbackOptions = [sourceText, ...a1Vocabulary.filter((item) => item.exampleZh !== word.exampleZh).slice(index + 1, index + 4).map((item) => language === 'en' ? exampleFor(item, 'en') : item.exampleZh)]
@@ -637,10 +676,11 @@ export function generateTranslationQuestionSet(direction: 'zh-es' | 'es-zh' = 'z
           explanation: `${word.exampleEs}\n${sourceText}`,
         }
   })
+  return filterUnseenQuestions(questions, excludedPrompts).slice(0, 20)
 }
 
-export function generateReadingQuestionSet(level = 'A1', language: InterfaceLanguage = 'zh'): QuizQuestion[] {
-  return generateVocabularySet('new', level).map((word, index) => {
+export function generateReadingQuestionSet(level = 'A1', language: InterfaceLanguage = 'zh', excludedPrompts: string[] = []): QuizQuestion[] {
+  const questions = generateVocabularySet('new', level).map((word, index) => {
     const options = [word.exampleEs, ...a1Vocabulary.filter((item) => item.exampleEs !== word.exampleEs).slice(index + 1, index + 4).map((item) => item.exampleEs)]
     const meaning = language === 'en' ? exampleFor(word, 'en') : word.exampleZh
     return {
@@ -650,6 +690,7 @@ export function generateReadingQuestionSet(level = 'A1', language: InterfaceLang
       explanation: language === 'en' ? `Read aloud: ${word.exampleEs}\nMeaning: ${meaning}` : `请朗读：${word.exampleEs}\n意思：${meaning}`,
     }
   })
+  return filterUnseenQuestions(questions, excludedPrompts).slice(0, 20)
 }
 
 export function getQuizTypeTitle(quizType: QuizSession['quizType'], language: InterfaceLanguage = 'zh') {

@@ -381,6 +381,37 @@ async function loadSeenVocabularyFromSupabase(telegramUserId: string) {
     .filter((word): word is string => typeof word === 'string' && word.length > 0)
 }
 
+
+async function loadSeenQuizPromptsFromSupabase(telegramUserId: string, quizType: QuizSession['quizType']) {
+  const cfg = createServiceSupabase()
+  if (!cfg) return []
+  const sessionsResponse = await fetch(
+    `${cfg.url}/rest/v1/quiz_sessions?select=id&telegram_user_id=eq.${encodeURIComponent(telegramUserId)}&quiz_type=eq.${quizType}&limit=1000`,
+    {
+      headers: {
+        apikey: cfg.key,
+        Authorization: `Bearer ${cfg.key}`,
+      },
+    },
+  ).catch(() => null)
+  if (!sessionsResponse?.ok) return []
+  const sessions = (await sessionsResponse.json().catch(() => [])) as Array<{ id?: string }>
+  const ids = sessions.map((session) => session.id).filter((id): id is string => Boolean(id))
+  if (!ids.length) return []
+  const answersResponse = await fetch(
+    `${cfg.url}/rest/v1/quiz_answers?select=prompt&quiz_session_id=in.(${ids.join(',')})&limit=2000`,
+    {
+      headers: {
+        apikey: cfg.key,
+        Authorization: `Bearer ${cfg.key}`,
+      },
+    },
+  ).catch(() => null)
+  if (!answersResponse?.ok) return []
+  const answers = (await answersResponse.json().catch(() => [])) as Array<{ prompt?: string }>
+  return [...new Set(answers.map((answer) => answer.prompt).filter((prompt): prompt is string => typeof prompt === 'string' && prompt.length > 0))]
+}
+
 async function persistVocabularyProgress(session: QuizSession) {
   if (session.quizType !== 'vocabulary' || !session.answers.length) return
   const cfg = createServiceSupabase()
@@ -537,6 +568,48 @@ async function persistVocabularyExposure(session: QuizSession) {
       'Content-Type': 'application/json',
     },
     body: JSON.stringify(progressRows),
+  }).catch(() => null)
+}
+
+async function persistQuizExposure(session: QuizSession) {
+  if (!session.questions.length) return
+  const cfg = createServiceSupabase()
+  if (!cfg) return
+  const response = await fetch(`${cfg.url}/rest/v1/quiz_sessions?select=id`, {
+    method: 'POST',
+    headers: {
+      apikey: cfg.key,
+      Authorization: `Bearer ${cfg.key}`,
+      'Content-Type': 'application/json',
+      Prefer: 'return=representation',
+    },
+    body: JSON.stringify({
+      telegram_user_id: session.telegramUserId,
+      quiz_type: session.quizType,
+      total_questions: session.questions.length,
+      correct_count: 0,
+      status: 'started',
+    }),
+  }).catch(() => null)
+  if (!response?.ok) return
+  const rows = (await response.json().catch(() => [])) as Array<{ id?: string }>
+  const sessionId = rows[0]?.id
+  if (!sessionId) return
+  await fetch(`${cfg.url}/rest/v1/quiz_answers`, {
+    method: 'POST',
+    headers: {
+      apikey: cfg.key,
+      Authorization: `Bearer ${cfg.key}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(session.questions.map((question) => ({
+      quiz_session_id: sessionId,
+      prompt: question.prompt,
+      selected_answer: null,
+      correct_answer: question.correctAnswer,
+      correct: true,
+      explanation: question.explanation ? `曝光记录/Exposure: ${question.explanation}` : '曝光记录/Exposure',
+    }))),
   }).catch(() => null)
 }
 
@@ -891,7 +964,9 @@ async function handleTextMessage(message: TelegramMessage) {
 
   if (text.startsWith('/grammar')) {
     const lang = getLearnerLanguage(learner.telegramUserId)
-    const session = createQuizSession(learner.telegramUserId, 'grammar', generateGrammarQuestionSet('A1', lang), lang === 'en' ? 'Grammar Quiz' : '语法测试')
+    const seenPrompts = await loadSeenQuizPromptsFromSupabase(learner.telegramUserId, 'grammar')
+    const session = createQuizSession(learner.telegramUserId, 'grammar', generateGrammarQuestionSet('A1', lang, seenPrompts), lang === 'en' ? 'Grammar Quiz' : '语法测试')
+    void persistQuizExposure(session)
     await startQuiz(chatId, session)
     return
   }
@@ -931,7 +1006,9 @@ async function handleCallback(callback: TelegramCallbackQuery) {
   if (data === 'menu:translate') return sendMenu(chatId, buildTranslationMenu(language))
 
   if (data === 'menu:grammar') {
-    const session = createQuizSession(learner.telegramUserId, 'grammar', generateGrammarQuestionSet('A1', language), language === 'en' ? 'Grammar Quiz' : '语法测试')
+    const seenPrompts = await loadSeenQuizPromptsFromSupabase(learner.telegramUserId, 'grammar')
+    const session = createQuizSession(learner.telegramUserId, 'grammar', generateGrammarQuestionSet('A1', language, seenPrompts), language === 'en' ? 'Grammar Quiz' : '语法测试')
+    void persistQuizExposure(session)
     return startQuiz(chatId, session)
   }
 
@@ -1082,12 +1159,14 @@ async function handleCallback(callback: TelegramCallbackQuery) {
 
   if (data.startsWith('translate:')) {
     const direction = data.split(':')[1] === 'es-zh' ? 'es-zh' : 'zh-es'
+    const seenPrompts = await loadSeenQuizPromptsFromSupabase(learner.telegramUserId, 'translation')
     const session = createQuizSession(
       learner.telegramUserId,
       'translation',
-      generateTranslationQuestionSet(direction, language),
+      generateTranslationQuestionSet(direction, language, seenPrompts),
       direction === 'zh-es' ? (language === 'en' ? 'English/Chinese → Spanish' : '中文 → 西语') : (language === 'en' ? 'Spanish → English' : '西语 → 中文'),
     )
+    void persistQuizExposure(session)
     return startQuiz(chatId, session)
   }
 }
