@@ -802,7 +802,7 @@ export function buildSpeakingModeMenu(language: InterfaceLanguage = 'zh'): Coach
 
 export function generateSpeakingPromptSet(mode: SpeakingMode, level = 'A1', language: InterfaceLanguage = 'zh', excludedPrompts: string[] = []): SpeakingPrompt[] {
   const excluded = new Set(excludedPrompts.map((prompt) => prompt.trim().toLowerCase()))
-  const prompts = generateVocabularySet('new', level).map((word) =>
+  const prompts = a1Vocabulary.map((word) => ({ ...word, level })).map((word) =>
     mode === 'read_sentence'
       ? {
           mode,
@@ -817,7 +817,8 @@ export function generateSpeakingPromptSet(mode: SpeakingMode, level = 'A1', lang
           guide: language === 'en' ? `You can answer: ${word.spanish} means ${meaningFor(word, 'en')}.` : `可以回答：${word.spanish} significa ${word.meaningZh}.`,
         },
   )
-  return prompts.filter((prompt) => !excluded.has(prompt.prompt.trim().toLowerCase())).slice(0, 20)
+  const unseenPrompts = prompts.filter((prompt) => !excluded.has(prompt.prompt.trim().toLowerCase()))
+  return (unseenPrompts.length ? unseenPrompts : prompts).slice(0, 20)
 }
 
 export function buildSpeakingPromptMessage(prompt: SpeakingPrompt, index: number, total: number, language: InterfaceLanguage = 'zh') {

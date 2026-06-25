@@ -348,6 +348,28 @@ describe('AI Spanish Coach bot flows', () => {
     expect(buildSpeakingFeedbackMessage(prompt, feedback, 0, 20)).toContain('已加入口语复习/错题队列')
   })
 
+  it('keeps generating speaking prompts after the first 20 exposed items and loops only after all are exhausted', () => {
+    const firstRoundPrompts = generateSpeakingPromptSet('read_sentence', 'A1').map((prompt) => prompt.prompt)
+    const nextRoundPrompts = generateSpeakingPromptSet('read_sentence', 'A1', 'zh', firstRoundPrompts).map((prompt) => prompt.prompt)
+    const exhaustedPrompts: string[] = []
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      const round = generateSpeakingPromptSet('read_sentence', 'A1', 'zh', exhaustedPrompts).map((prompt) => prompt.prompt)
+      const newlySeen = round.filter((prompt) => !exhaustedPrompts.includes(prompt))
+      if (!newlySeen.length) break
+      exhaustedPrompts.push(...newlySeen)
+    }
+
+    const loopedPrompts = generateSpeakingPromptSet('read_sentence', 'A1', 'zh', exhaustedPrompts)
+
+    expect(firstRoundPrompts).toHaveLength(20)
+    expect(nextRoundPrompts).toHaveLength(20)
+    expect(nextRoundPrompts[0]).not.toBe(firstRoundPrompts[0])
+    expect(nextRoundPrompts.some((prompt) => firstRoundPrompts.includes(prompt))).toBe(false)
+    expect(exhaustedPrompts.length).toBeGreaterThan(20)
+    expect(loopedPrompts).toHaveLength(20)
+  })
+
   it('matches a transcript back to the closest speaking prompt when serverless state is missing', () => {
     const match = findBestSpeakingPromptForTranscript('Mi viaje a España playing clay play')
 
