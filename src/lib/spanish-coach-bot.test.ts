@@ -35,6 +35,7 @@ import {
   generateTranslationQuestionSet,
   generateReadingQuestionSet,
   generateVocabularyQuestionSet,
+  parseSpeakingPromptMessage,
   toSpeakingExerciseInsert,
 } from './spanish-coach-bot'
 
@@ -346,6 +347,26 @@ describe('AI Spanish Coach bot flows', () => {
     expect(feedback.needsReview).toBe(true)
     expect(feedback.missingWords.length).toBeGreaterThan(0)
     expect(buildSpeakingFeedbackMessage(prompt, feedback, 0, 20)).toContain('已加入口语复习/错题队列')
+  })
+
+  it('parses a replied speaking prompt so voice scoring uses the replied question', () => {
+    const prompt = generateSpeakingPromptSet('read_sentence', 'A1')[1]
+    const message = buildSpeakingPromptMessage(prompt, 1, 20)
+    const parsed = parseSpeakingPromptMessage(message)
+
+    expect(parsed?.index).toBe(1)
+    expect(parsed?.total).toBe(20)
+    expect(parsed?.prompt.targetAnswer).toBe(prompt.targetAnswer)
+    expect(evaluateSpokenAttempt(parsed!.prompt, 'La calle es muy bonita').score).toBeGreaterThanOrEqual(90)
+  })
+
+  it('uses a speakable Spanish reference answer for question-answer speaking mode', () => {
+    const [prompt] = generateSpeakingPromptSet('answer_question', 'A1')
+    const parsed = parseSpeakingPromptMessage(buildSpeakingPromptMessage(prompt, 0, 20))
+
+    expect(prompt.targetAnswer).toContain('significa')
+    expect(prompt.targetAnswer).not.toMatch(/[\u4e00-\u9fff]/)
+    expect(parsed?.prompt.targetAnswer).toBe(prompt.targetAnswer)
   })
 
   it('keeps generating speaking prompts after the first 20 exposed items and loops only after all are exhausted', () => {

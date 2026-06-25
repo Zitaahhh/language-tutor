@@ -170,6 +170,10 @@ function exampleFor(item: VocabularyItem, language: InterfaceLanguage = 'zh') {
   return language === 'en' ? vocabularyEnglish[item.spanish]?.example ?? item.exampleZh : item.exampleZh
 }
 
+function speakableMeaningFor(item: VocabularyItem) {
+  return vocabularyEnglish[item.spanish]?.meaning ?? item.spanish
+}
+
 export function buildBotMainMenu(language: InterfaceLanguage = 'zh'): CoachMenu {
   if (language === 'en') {
     return {
@@ -813,12 +817,51 @@ export function generateSpeakingPromptSet(mode: SpeakingMode, level = 'A1', lang
       : {
           mode,
           prompt: language === 'en' ? `Answer this question in Spanish by voice:\nWhat does “${word.spanish}” mean?` : `请用西语语音回答问题：\n¿Qué significa “${word.spanish}”?`,
-          targetAnswer: language === 'en' ? `${word.spanish} means ${meaningFor(word, 'en')}.` : word.meaningZh,
+          targetAnswer: `${word.spanish} significa ${speakableMeaningFor(word)}.`,
           guide: language === 'en' ? `You can answer: ${word.spanish} means ${meaningFor(word, 'en')}.` : `可以回答：${word.spanish} significa ${word.meaningZh}.`,
         },
   )
   const unseenPrompts = prompts.filter((prompt) => !excluded.has(prompt.prompt.trim().toLowerCase()))
   return (unseenPrompts.length ? unseenPrompts : prompts).slice(0, 20)
+}
+
+export function parseSpeakingPromptMessage(text: string, language: InterfaceLanguage = 'zh'): { prompt: SpeakingPrompt; index: number; total: number } | null {
+  const header = text.match(/(?:口语测试｜第|Speaking Test \| Question)\s*(\d+)\/(\d+)/)
+  if (!header) return null
+
+  const lines = text.split('\n').map((line) => line.trim()).filter(Boolean)
+  const readSentenceMarker = lines.findIndex((line) => line === '请朗读这个句子：' || line === 'Read this sentence aloud:')
+  if (readSentenceMarker >= 0) {
+    const targetAnswer = lines[readSentenceMarker + 1]
+    if (!targetAnswer) return null
+    return {
+      index: Math.max(0, Number(header[1]) - 1),
+      total: Number(header[2]),
+      prompt: {
+        mode: 'read_sentence',
+        prompt: lines.slice(readSentenceMarker, Math.min(lines.length, readSentenceMarker + 3)).join('\n'),
+        targetAnswer,
+        guide: language === 'en' ? 'Pay attention to stress, clear vowels, and smooth sentence flow.' : '注意重音、元音清晰度和整句连贯度。',
+      },
+    }
+  }
+
+  const answerQuestionMarker = lines.findIndex((line) => line === '请用西语语音回答问题：' || line === 'Answer this question in Spanish by voice:')
+  const questionLine = answerQuestionMarker >= 0 ? lines[answerQuestionMarker + 1] : undefined
+  const word = questionLine?.match(/[“\"]([^”\"]+)[”\"]/)?.[1]
+  if (!word) return null
+  const vocabularyItem = a1Vocabulary.find((item) => item.spanish.toLowerCase() === word.toLowerCase())
+  if (!vocabularyItem) return null
+  return {
+    index: Math.max(0, Number(header[1]) - 1),
+    total: Number(header[2]),
+    prompt: {
+      mode: 'answer_question',
+      prompt: lines.slice(answerQuestionMarker, Math.min(lines.length, answerQuestionMarker + 2)).join('\n'),
+      targetAnswer: `${vocabularyItem.spanish} significa ${speakableMeaningFor(vocabularyItem)}.`,
+      guide: language === 'en' ? `You can answer: ${vocabularyItem.spanish} means ${meaningFor(vocabularyItem, 'en')}.` : `可以回答：${vocabularyItem.spanish} significa ${vocabularyItem.meaningZh}.`,
+    },
+  }
 }
 
 export function buildSpeakingPromptMessage(prompt: SpeakingPrompt, index: number, total: number, language: InterfaceLanguage = 'zh') {

@@ -29,6 +29,7 @@ import {
   generateVocabularySet,
   getNextVocabularyQuestion,
   getNextQuizQuestion,
+  parseSpeakingPromptMessage,
   recordCheckIn,
   recordQuizAnswer,
   recordVocabularyAnswer,
@@ -49,6 +50,7 @@ type TelegramMessage = {
   message_id?: number
   text?: string
   voice?: { file_id: string }
+  reply_to_message?: TelegramMessage
   from?: { id?: number; username?: string; first_name?: string }
 }
 
@@ -886,9 +888,12 @@ async function handleTextMessage(message: TelegramMessage) {
     } else {
       persistentSession = await loadPersistentSpeakingSession(learner.telegramUserId)
     }
-    const activePrompt = session?.prompts[session.currentIndex]
+    const repliedPrompt = message.reply_to_message?.text
+      ? parseSpeakingPromptMessage(message.reply_to_message.text, getLearnerLanguage(learner.telegramUserId))
+      : null
+    const activePrompt = repliedPrompt?.prompt ?? session?.prompts[session.currentIndex]
     const transcript = await transcribeTelegramVoice(message.voice.file_id, activePrompt ? 'es' : undefined)
-    const fallbackMatch = activePrompt ? null : findBestSpeakingPromptForTranscript(transcript)
+    const fallbackMatch = activePrompt ? null : findBestSpeakingPromptForTranscript(transcript, session?.prompts)
 
     if (!activePrompt && !fallbackMatch) {
       const translated = await translateTranscriptToSpanish(transcript)
@@ -946,11 +951,11 @@ async function handleTextMessage(message: TelegramMessage) {
             : getLearnerLanguage(learner.telegramUserId) === 'en'
               ? 'No active speaking test was detected and no similar question was matched; I corrected it using the default Day 1 sentence:'
               : '没有检测到正在进行的口语测试，也没有匹配到相近题目；我先按 Day 1 默认句子给你纠正：',
-        buildSpeakingFeedbackMessage(prompt, feedback, activePrompt ? session?.currentIndex ?? 0 : fallbackMatch?.index ?? 0, session?.prompts.length ?? 1, getLearnerLanguage(learner.telegramUserId)),
+        buildSpeakingFeedbackMessage(prompt, feedback, repliedPrompt?.index ?? (activePrompt ? session?.currentIndex ?? 0 : fallbackMatch?.index ?? 0), repliedPrompt?.total ?? session?.prompts.length ?? 1, getLearnerLanguage(learner.telegramUserId)),
       ].filter((line) => line.length > 0).join('\n\n'),
     })
     await sendPronunciationAudio(chatId, prompt.targetAnswer)
-    if (session && activePrompt) {
+    if (session && activePrompt && !repliedPrompt) {
       session.currentIndex += 1
       const completed = session.currentIndex >= session.prompts.length
       if (persistentSession?.id) void updatePersistentSpeakingSession(persistentSession.id, session.currentIndex, completed)
