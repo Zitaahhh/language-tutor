@@ -456,6 +456,90 @@ async function persistVocabularyProgress(session: QuizSession) {
   }).catch(() => null)
 }
 
+
+async function persistVocabularyExposure(session: QuizSession) {
+  if (session.quizType !== 'vocabulary' || !session.questions.length) return
+  const cfg = createServiceSupabase()
+  if (!cfg) return
+
+  const vocabularyRows = session.questions
+    .filter((question) => question.vocabularySpanish)
+    .map((question) => ({
+      spanish: question.vocabularySpanish!,
+      meaning_zh: question.vocabularyMeaningZh ?? question.correctAnswer,
+      example_es: question.vocabularyExampleEs ?? '',
+      example_zh: question.vocabularyExampleZh ?? '',
+      level: question.vocabularyLevel ?? 'A1',
+    }))
+  const words = [...new Set(vocabularyRows.map((row) => row.spanish))]
+  if (!words.length) return
+
+  await fetch(`${cfg.url}/rest/v1/vocabulary_items?on_conflict=spanish`, {
+    method: 'POST',
+    headers: {
+      apikey: cfg.key,
+      Authorization: `Bearer ${cfg.key}`,
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=merge-duplicates',
+    },
+    body: JSON.stringify(vocabularyRows),
+  }).catch(() => null)
+
+  const quotedWords = words.map((word) => `"${word.replace(/"/g, '\\"')}"`).join(',')
+  const itemsResponse = await fetch(
+    `${cfg.url}/rest/v1/vocabulary_items?select=id,spanish&spanish=in.(${encodeURIComponent(quotedWords)})`,
+    {
+      headers: {
+        apikey: cfg.key,
+        Authorization: `Bearer ${cfg.key}`,
+      },
+    },
+  ).catch(() => null)
+  if (!itemsResponse?.ok) return
+
+  const items = (await itemsResponse.json().catch(() => [])) as Array<{ id: string; spanish: string }>
+  const itemIds = items.map((item) => item.id)
+  if (!itemIds.length) return
+
+  const existingResponse = await fetch(
+    `${cfg.url}/rest/v1/user_vocabulary_progress?select=vocabulary_item_id&telegram_user_id=eq.${encodeURIComponent(session.telegramUserId)}&vocabulary_item_id=in.(${itemIds.join(',')})`,
+    {
+      headers: {
+        apikey: cfg.key,
+        Authorization: `Bearer ${cfg.key}`,
+      },
+    },
+  ).catch(() => null)
+  const existingRows = existingResponse?.ok
+    ? ((await existingResponse.json().catch(() => [])) as Array<{ vocabulary_item_id?: string }>)
+    : []
+  const existingIds = new Set(existingRows.map((row) => row.vocabulary_item_id).filter(Boolean))
+
+  const now = new Date().toISOString()
+  const progressRows = items
+    .filter((item) => !existingIds.has(item.id))
+    .map((item) => ({
+      telegram_user_id: session.telegramUserId,
+      vocabulary_item_id: item.id,
+      status: 'seen',
+      correct_count: 0,
+      wrong_count: 0,
+      last_seen_at: now,
+      next_review_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    }))
+
+  if (!progressRows.length) return
+  await fetch(`${cfg.url}/rest/v1/user_vocabulary_progress`, {
+    method: 'POST',
+    headers: {
+      apikey: cfg.key,
+      Authorization: `Bearer ${cfg.key}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(progressRows),
+  }).catch(() => null)
+}
+
 async function persistCompletedQuizSession(session: QuizSession, status: 'completed' | 'stopped' = 'completed') {
   const cfg = createServiceSupabase()
   if (!cfg) return
@@ -872,6 +956,7 @@ async function handleCallback(callback: TelegramCallbackQuery) {
     const title = mode === 'new' ? (language === 'en' ? 'Learn 20 New Words' : '学习20个新词汇') : mode === 'old' ? (language === 'en' ? 'Review 20 Old Words' : '复习20个旧词汇') : (language === 'en' ? 'Review Mistakes' : '错题复习')
     const seenVocabulary = mode === 'new' ? await loadSeenVocabularyFromSupabase(learner.telegramUserId) : []
     const session = createQuizSession(learner.telegramUserId, 'vocabulary', generateVocabularyQuestionSet(mode, 'A1', language, seenVocabulary), title)
+    if (mode === 'new') void persistVocabularyExposure(session)
     return startQuiz(chatId, session)
   }
 
