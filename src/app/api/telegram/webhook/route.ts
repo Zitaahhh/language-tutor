@@ -198,6 +198,22 @@ async function persistSpeakingExercise(exercise: SpeakingExerciseInsert) {
   }).catch(() => null)
 }
 
+async function persistSpeakingPromptExposure(telegramUserId: string, prompts: SpeakingPrompt[]) {
+  if (!prompts.length) return
+  const session = createQuizSession(
+    telegramUserId,
+    'reading',
+    prompts.map((prompt) => ({
+      prompt: prompt.prompt,
+      options: [prompt.targetAnswer],
+      correctAnswer: prompt.targetAnswer,
+      explanation: prompt.guide,
+    })),
+    'Speaking exposure',
+  )
+  void persistQuizExposure(session)
+}
+
 async function createPersistentSpeakingSession(telegramUserId: string, mode: SpeakingMode, totalQuestions = 20) {
   const cfg = createServiceSupabase()
   if (!cfg) return null
@@ -1146,13 +1162,15 @@ async function handleCallback(callback: TelegramCallbackQuery) {
 
   if (data.startsWith('speaking:')) {
     const mode = data.split(':')[1] === 'answer_question' ? 'answer_question' : 'read_sentence'
-    const prompts = generateSpeakingPromptSet(mode, 'A1', language)
+    const seenPrompts = await loadSeenQuizPromptsFromSupabase(learner.telegramUserId, 'reading')
+    const prompts = generateSpeakingPromptSet(mode, 'A1', language, seenPrompts)
     speakingSessions.set(learner.telegramUserId, {
       prompts,
       currentIndex: 0,
       scores: [],
       mode,
     })
+    void persistSpeakingPromptExposure(learner.telegramUserId, prompts)
     await createPersistentSpeakingSession(learner.telegramUserId, mode, prompts.length)
     return sendSpeakingPrompt(chatId, learner.telegramUserId)
   }
