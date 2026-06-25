@@ -362,6 +362,100 @@ async function loadMistakeStatsFromSupabase(telegramUserId: string) {
   return stats
 }
 
+async function loadSeenVocabularyFromSupabase(telegramUserId: string) {
+  const cfg = createServiceSupabase()
+  if (!cfg) return []
+  const response = await fetch(
+    `${cfg.url}/rest/v1/user_vocabulary_progress?select=vocabulary_items(spanish)&telegram_user_id=eq.${encodeURIComponent(telegramUserId)}&last_seen_at=not.is.null&limit=1000`,
+    {
+      headers: {
+        apikey: cfg.key,
+        Authorization: `Bearer ${cfg.key}`,
+      },
+    },
+  ).catch(() => null)
+  if (!response?.ok) return []
+  const rows = (await response.json().catch(() => [])) as Array<{ vocabulary_items?: { spanish?: string } | { spanish?: string }[] }>
+  return rows
+    .map((row) => Array.isArray(row.vocabulary_items) ? row.vocabulary_items[0]?.spanish : row.vocabulary_items?.spanish)
+    .filter((word): word is string => typeof word === 'string' && word.length > 0)
+}
+
+async function persistVocabularyProgress(session: QuizSession) {
+  if (session.quizType !== 'vocabulary' || !session.answers.length) return
+  const cfg = createServiceSupabase()
+  if (!cfg) return
+
+  const words = [...new Set(session.questions.map((question) => question.vocabularySpanish).filter((word): word is string => Boolean(word)))]
+  if (!words.length) return
+
+  const vocabularyRows = session.questions
+    .filter((question) => question.vocabularySpanish)
+    .map((question) => ({
+      spanish: question.vocabularySpanish!,
+      meaning_zh: question.vocabularyMeaningZh ?? question.correctAnswer,
+      example_es: question.vocabularyExampleEs ?? '',
+      example_zh: question.vocabularyExampleZh ?? '',
+      level: question.vocabularyLevel ?? 'A1',
+    }))
+
+  await fetch(`${cfg.url}/rest/v1/vocabulary_items`, {
+    method: 'POST',
+    headers: {
+      apikey: cfg.key,
+      Authorization: `Bearer ${cfg.key}`,
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=merge-duplicates',
+    },
+    body: JSON.stringify(vocabularyRows),
+  }).catch(() => null)
+
+  const quotedWords = words.map((word) => `"${word.replace(/"/g, '\\"')}"`).join(',')
+  const itemsResponse = await fetch(
+    `${cfg.url}/rest/v1/vocabulary_items?select=id,spanish&spanish=in.(${encodeURIComponent(quotedWords)})`,
+    {
+      headers: {
+        apikey: cfg.key,
+        Authorization: `Bearer ${cfg.key}`,
+      },
+    },
+  ).catch(() => null)
+  if (!itemsResponse?.ok) return
+  const items = (await itemsResponse.json().catch(() => [])) as Array<{ id: string; spanish: string }>
+  const itemIdBySpanish = new Map(items.map((item) => [item.spanish, item.id]))
+  const now = new Date().toISOString()
+  const progressRows = session.answers
+    .map((answer, index) => {
+      const spanish = session.questions[index]?.vocabularySpanish
+      const itemId = spanish ? itemIdBySpanish.get(spanish) : null
+      if (!itemId) return null
+      return {
+        telegram_user_id: session.telegramUserId,
+        vocabulary_item_id: itemId,
+        status: answer.correct ? 'learned' : 'mistake',
+        correct_count: answer.correct ? 1 : 0,
+        wrong_count: answer.correct ? 0 : 1,
+        last_seen_at: now,
+        next_review_at: answer.correct
+          ? new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString()
+          : new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      }
+    })
+    .filter((row): row is NonNullable<typeof row> => Boolean(row))
+
+  if (!progressRows.length) return
+  await fetch(`${cfg.url}/rest/v1/user_vocabulary_progress`, {
+    method: 'POST',
+    headers: {
+      apikey: cfg.key,
+      Authorization: `Bearer ${cfg.key}`,
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=merge-duplicates',
+    },
+    body: JSON.stringify(progressRows),
+  }).catch(() => null)
+}
+
 async function persistCompletedQuizSession(session: QuizSession, status: 'completed' | 'stopped' = 'completed') {
   const cfg = createServiceSupabase()
   if (!cfg) return
@@ -402,6 +496,7 @@ async function persistCompletedQuizSession(session: QuizSession, status: 'comple
       explanation: answer.explanation,
     }))),
   }).catch(() => null)
+  await persistVocabularyProgress(session)
 }
 
 async function sendMenu(chatId: number | string, menu: { text: string; buttons: { text: string; callback_data: string }[][] }) {
@@ -775,7 +870,8 @@ async function handleCallback(callback: TelegramCallbackQuery) {
     const mode = data.split(':')[1] as VocabMode
     learner.currentQuestionIndex = 0
     const title = mode === 'new' ? (language === 'en' ? 'Learn 20 New Words' : '学习20个新词汇') : mode === 'old' ? (language === 'en' ? 'Review 20 Old Words' : '复习20个旧词汇') : (language === 'en' ? 'Review Mistakes' : '错题复习')
-    const session = createQuizSession(learner.telegramUserId, 'vocabulary', generateVocabularyQuestionSet(mode, 'A1', language), title)
+    const seenVocabulary = mode === 'new' ? await loadSeenVocabularyFromSupabase(learner.telegramUserId) : []
+    const session = createQuizSession(learner.telegramUserId, 'vocabulary', generateVocabularyQuestionSet(mode, 'A1', language, seenVocabulary), title)
     return startQuiz(chatId, session)
   }
 

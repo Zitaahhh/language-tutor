@@ -75,6 +75,64 @@ const a1Vocabulary: VocabularyItem[] = [
   ['mesa', '桌子', 'El libro está en la mesa.', '书在桌子上。'],
   ['leche', '牛奶', 'Quiero café con leche.', '我要牛奶咖啡。'],
   ['pan', '面包', 'Compro pan cada mañana.', '我每天早上买面包。'],
+  ['casa', '家/房子', 'Mi casa está cerca.', '我家很近。'],
+  ['habitación', '房间', 'La habitación es pequeña.', '这个房间很小。'],
+  ['puerta', '门', 'La puerta está abierta.', '门开着。'],
+  ['ventana', '窗户', 'Abro la ventana.', '我打开窗户。'],
+  ['silla', '椅子', 'Me siento en la silla.', '我坐在椅子上。'],
+  ['teléfono', '电话/手机', 'Mi teléfono está aquí.', '我的手机在这里。'],
+  ['dinero', '钱', 'No tengo dinero.', '我没有钱。'],
+  ['tarjeta', '卡', 'Pago con tarjeta.', '我用卡付款。'],
+  ['mercado', '市场', 'Voy al mercado.', '我去市场。'],
+  ['supermercado', '超市', 'El supermercado abre a las nueve.', '超市九点开门。'],
+  ['restaurante', '餐厅', 'Cenamos en un restaurante.', '我们在餐厅吃晚饭。'],
+  ['menú', '菜单', '¿Tiene el menú?', '您有菜单吗？'],
+  ['pollo', '鸡肉', 'Quiero pollo con arroz.', '我要鸡肉配米饭。'],
+  ['arroz', '米饭', 'Como arroz todos los días.', '我每天吃米饭。'],
+  ['fruta', '水果', 'La fruta está fresca.', '水果很新鲜。'],
+  ['manzana', '苹果', 'Como una manzana.', '我吃一个苹果。'],
+  ['naranja', '橙子', 'Quiero zumo de naranja.', '我想要橙汁。'],
+  ['verdura', '蔬菜', 'Me gusta la verdura.', '我喜欢蔬菜。'],
+  ['ropa', '衣服', 'Necesito comprar ropa.', '我需要买衣服。'],
+  ['camisa', '衬衫', 'La camisa es blanca.', '衬衫是白色的。'],
+  ['zapatos', '鞋子', 'Mis zapatos son cómodos.', '我的鞋很舒服。'],
+  ['abrigo', '外套', 'Necesito un abrigo.', '我需要一件外套。'],
+  ['playa', '海滩', 'Vamos a la playa.', '我们去海滩。'],
+  ['montaña', '山', 'La montaña es alta.', '山很高。'],
+  ['ciudad', '城市', 'Madrid es una ciudad grande.', '马德里是一个大城市。'],
+  ['pueblo', '小镇/村庄', 'El pueblo es tranquilo.', '这个小镇很安静。'],
+  ['hotel', '酒店', 'Tengo una reserva en el hotel.', '我在酒店有预订。'],
+  ['reserva', '预订', 'Quiero hacer una reserva.', '我想预订。'],
+  ['pasaporte', '护照', 'Necesito mi pasaporte.', '我需要我的护照。'],
+  ['billete', '票', 'Compro un billete de tren.', '我买一张火车票。'],
+  ['aeropuerto', '机场', 'El aeropuerto está lejos.', '机场很远。'],
+  ['taxi', '出租车', 'Tomamos un taxi.', '我们坐出租车。'],
+  ['autobús', '公交车', 'El autobús llega tarde.', '公交车晚点了。'],
+  ['metro', '地铁', 'Voy en metro.', '我坐地铁去。'],
+  ['mapa', '地图', 'Necesito un mapa.', '我需要一张地图。'],
+  ['izquierda', '左边', 'Gire a la izquierda.', '向左转。'],
+  ['derecha', '右边', 'Gire a la derecha.', '向右转。'],
+  ['cerca', '近', 'La estación está cerca.', '车站很近。'],
+  ['lejos', '远', 'El hotel está lejos.', '酒店很远。'],
+  ['grande', '大', 'La ciudad es grande.', '这个城市很大。'],
+  ['pequeño', '小', 'El café es pequeño.', '这家咖啡馆很小。'],
+  ['bonito', '漂亮', 'El parque es bonito.', '公园很漂亮。'],
+  ['rápido', '快', 'El tren es rápido.', '火车很快。'],
+  ['lento', '慢', 'El servicio es lento.', '服务很慢。'],
+  ['fácil', '容易', 'Esta palabra es fácil.', '这个单词很容易。'],
+  ['difícil', '难', 'La gramática es difícil.', '语法很难。'],
+  ['nuevo', '新的', 'Tengo un libro nuevo.', '我有一本新书。'],
+  ['viejo', '旧的/老的', 'Este edificio es viejo.', '这栋楼很旧。'],
+  ['ayuda', '帮助', 'Necesito ayuda.', '我需要帮助。'],
+  ['pregunta', '问题', 'Tengo una pregunta.', '我有一个问题。'],
+  ['respuesta', '回答', 'La respuesta es correcta.', '答案是正确的。'],
+  ['clase', '课', 'Tengo clase de español.', '我有西语课。'],
+  ['profesor', '老师', 'El profesor habla despacio.', '老师说得很慢。'],
+  ['estudiante', '学生', 'Soy estudiante.', '我是学生。'],
+  ['ejercicio', '练习', 'Hago un ejercicio.', '我做一个练习。'],
+  ['palabra', '单词', 'Aprendo una palabra nueva.', '我学习一个新单词。'],
+  ['frase', '句子/短语', 'Escribo una frase.', '我写一个句子。'],
+  ['pronunciación', '发音', 'Practico la pronunciación.', '我练习发音。'],
 ].map(([spanish, meaningZh, exampleEs, exampleZh]) => ({ spanish, meaningZh, exampleEs, exampleZh, level: 'A1' }))
 
 const vocabularyEnglish: Record<string, { meaning: string; example: string }> = {
@@ -195,9 +253,15 @@ export function buildVocabularyModeMenu(language: InterfaceLanguage = 'zh'): Coa
   }
 }
 
-export function generateVocabularySet(mode: VocabMode, level = 'A1'): VocabularyItem[] {
+export function generateVocabularySet(mode: VocabMode, level = 'A1', excludedSpanish: string[] = []): VocabularyItem[] {
   const offset = mode === 'old' ? 2 : mode === 'mistakes' ? 4 : 0
-  return Array.from({ length: 20 }, (_, index) => a1Vocabulary[(index + offset) % a1Vocabulary.length]).map((item) => ({
+  const excluded = new Set(excludedSpanish.map((word) => word.toLowerCase()))
+  const source = mode === 'new'
+    ? a1Vocabulary.filter((item) => !excluded.has(item.spanish.toLowerCase()))
+    : a1Vocabulary
+  const pool = source.length >= 20 ? source : [...source, ...a1Vocabulary.filter((item) => !source.some((candidate) => candidate.spanish === item.spanish))]
+
+  return Array.from({ length: Math.min(20, pool.length) }, (_, index) => pool[(index + offset) % pool.length]).map((item) => ({
     ...item,
     level,
   }))
@@ -369,6 +433,11 @@ export type QuizQuestion = {
   options: string[]
   correctAnswer: string
   explanation?: string
+  vocabularySpanish?: string
+  vocabularyMeaningZh?: string
+  vocabularyExampleEs?: string
+  vocabularyExampleZh?: string
+  vocabularyLevel?: string
 }
 
 export type QuizSession = {
@@ -511,8 +580,8 @@ export function buildMistakeBookText(displayName: string, stats: Partial<Mistake
   ].join('\n')
 }
 
-export function generateVocabularyQuestionSet(mode: VocabMode, level = 'A1', language: InterfaceLanguage = 'zh'): QuizQuestion[] {
-  const words = generateVocabularySet(mode, level)
+export function generateVocabularyQuestionSet(mode: VocabMode, level = 'A1', language: InterfaceLanguage = 'zh', excludedSpanish: string[] = []): QuizQuestion[] {
+  const words = generateVocabularySet(mode, level, excludedSpanish)
   return words.map((_, index) => {
     const question = buildVocabularyQuestion(words, index, language)
     const meaning = meaningFor(question.word, language)
@@ -522,6 +591,11 @@ export function generateVocabularyQuestionSet(mode: VocabMode, level = 'A1', lan
       options: question.options,
       correctAnswer: question.correctAnswer,
       explanation: `${question.word.spanish} = ${meaning}\n${question.word.exampleEs}\n${example}`,
+      vocabularySpanish: question.word.spanish,
+      vocabularyMeaningZh: question.word.meaningZh,
+      vocabularyExampleEs: question.word.exampleEs,
+      vocabularyExampleZh: question.word.exampleZh,
+      vocabularyLevel: question.word.level,
     }
   })
 }

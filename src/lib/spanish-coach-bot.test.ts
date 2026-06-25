@@ -85,9 +85,20 @@ describe('AI Spanish Coach bot flows', () => {
     const question = buildVocabularyQuestion(words, 0)
 
     expect(words).toHaveLength(20)
+    expect(new Set(words.map((word) => word.spanish)).size).toBe(20)
     expect(question.options).toHaveLength(4)
     expect(question.options).toContain(words[0].meaningZh)
     expect(question.prompt).toContain(words[0].spanish)
+  })
+
+  it('excludes previously tested words from a new 20-word vocabulary round', () => {
+    const previouslySeen = generateVocabularySet('new', 'A1').slice(0, 20).map((word) => word.spanish)
+    const questions = generateVocabularyQuestionSet('new', 'A1', 'zh', previouslySeen)
+    const promptedWords = questions.map((question) => question.prompt.split(' ')[0])
+
+    expect(questions).toHaveLength(20)
+    expect(new Set(promptedWords).size).toBe(20)
+    expect(promptedWords.some((word) => previouslySeen.includes(word))).toBe(false)
   })
 
   it('evaluates vocabulary answers and marks mistakes for review', () => {
